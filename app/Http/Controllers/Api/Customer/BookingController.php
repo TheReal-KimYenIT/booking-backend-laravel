@@ -10,6 +10,7 @@ use App\Models\RoomInventory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Carbon\Carbon;
 
 class BookingController extends Controller
@@ -66,7 +67,6 @@ class BookingController extends Controller
             'data' => $booking
         ], 201);
     }
-
     public function createBooking(Request $request)
     {
         $request->validate([
@@ -82,8 +82,8 @@ class BookingController extends Controller
             'services' => 'nullable|array',
             'services.*.id' => 'required_with:services|integer',
             'services.*.quantity' => 'required_with:services|integer|min:1',
-            'global_promotion_code' => 'nullable|string', // Mã Sàn
-            'hotel_promotion_code' => 'nullable|string'   // Mã KS
+            'global_promotion_code' => 'nullable|string',
+            'hotel_promotion_code' => 'nullable|string'
         ]);
 
         try {
@@ -92,9 +92,14 @@ class BookingController extends Controller
                 $roomType = RoomType::find($request->room_type_id);
                 if (!$roomType) throw new \Exception('Không tìm thấy loại phòng hợp lệ.');
 
-                // =====================================
-                // 👉 ĐÃ SỬA: TÍNH TIỀN PHÒNG ĐỘNG THEO LỊCH KHO PHÒNG
-                // =====================================
+                // 👉 1. CHỤP NHANH (SNAPSHOT) CẤU HÌNH % TỪ DATABASE
+                $uiSettings = DB::table('ui_settings')->pluck('setting_value', 'setting_key');
+                $systemVatRate = isset($uiSettings['vat_rate']) ? (float)$uiSettings['vat_rate'] : 10;
+                $defaultCommission = isset($uiSettings['default_commission_rate']) ? (float)$uiSettings['default_commission_rate'] : 15;
+
+                $hotel = \App\Models\Hotel::find($request->hotel_id);
+                $hotelCommissionRate = $hotel->commission_rate ?? $defaultCommission;
+
                 $checkIn = Carbon::parse($request->check_in);
                 $checkOut = Carbon::parse($request->check_out);
                 $nights = $checkIn->diffInDays($checkOut);
@@ -105,37 +110,38 @@ class BookingController extends Controller
 
                 for ($i = 0; $i < $nights; $i++) {
                     $dateStr = $currentDate->format('Y-m-d');
-
-                    // Truy quét lịch cấu hình cụ thể từng ngày
                     $inventory = RoomInventory::where('room_type_id', $roomType->id)
                         ->where('apply_date', $dateStr)
                         ->first();
 
-                    // Chặn tức thì nếu ngày này chủ phòng chọn "Đóng bán" (is_closed = 1)
                     if ($inventory && (int)$inventory->is_closed === 1) {
                         throw new \Exception("Rất tiếc, loại phòng này đã dừng nhận khách vào ngày " . $currentDate->format('d/m/Y'));
                     }
 
-                    // Tự động sử dụng giá động theo ngày hoặc rollback về base_price nếu chưa setup
                     $dailyPrice = $inventory ? $inventory->price : $roomType->base_price;
                     $subtotal += $dailyPrice;
-
                     $currentDate->addDay();
                 }
 
-                // Nhân tổng lũy kế số đêm với số lượng phòng khách đặt
                 $subtotal = $subtotal * $request->rooms_count;
-                $tax = $subtotal * 0.1;
 
-                // =====================================
-                // XỬ LÝ KHUYẾN MÃI KÉP (CASCADING)
-                // =====================================
+                // TÍNH DỊCH VỤ 
+                $servicesTotal = 0;
+                $requestedServices = [];
+                if ($request->has('services') && count($request->services) > 0) {
+                    $requestedServices = \App\Models\Service::whereIn('id', array_column($request->services, 'id'))->get();
+                    foreach ($requestedServices as $srv) {
+                        $qty = collect($request->services)->firstWhere('id', $srv->id)['quantity'] ?? 1;
+                        $servicesTotal += ($srv->price * $qty);
+                    }
+                }
+
+                // XỬ LÝ KHUYẾN MÃI KÉP
                 $globalDiscount = 0;
                 $hotelDiscount = 0;
                 $globalPromoId = null;
                 $hotelPromoId = null;
 
-                // 1. ÁP DỤNG MÃ SÀN (GLOBAL)
                 if ($request->has('global_promotion_code') && !empty($request->global_promotion_code)) {
                     $promo = \App\Models\Promotion::where('code', $request->global_promotion_code)
                         ->whereNull('hotel_id')->lockForUpdate()->first();
@@ -153,7 +159,6 @@ class BookingController extends Controller
                     }
                 }
 
-                // 2. ÁP DỤNG MÃ KHÁCH SÀN (HOTEL) TRÊN GIÁ ĐÃ GIẢM
                 $subtotalAfterGlobal = $subtotal - $globalDiscount;
 
                 if ($request->has('hotel_promotion_code') && !empty($request->hotel_promotion_code)) {
@@ -161,7 +166,6 @@ class BookingController extends Controller
                         ->where('hotel_id', $request->hotel_id)->lockForUpdate()->first();
 
                     if ($promo && $promo->status == 1 && $promo->used_count < ($promo->usage_limit ?? 999999999)) {
-                        // Check đơn tối thiểu dựa trên giá ĐÃ TRỪ mã sàn
                         if ($promo->min_booking_value == 0 || $subtotalAfterGlobal >= $promo->min_booking_value) {
                             $hotelPromoId = $promo->id;
                             if ($promo->discount_type == 1) {
@@ -178,27 +182,19 @@ class BookingController extends Controller
 
                 $totalDiscount = $globalDiscount + $hotelDiscount;
 
-                // =====================================
-                // TÍNH DỊCH VỤ VÀ LƯU ĐƠN
-                // =====================================
-                $servicesTotal = 0;
-                $requestedServices = [];
-                if ($request->has('services') && count($request->services) > 0) {
-                    $requestedServices = \App\Models\Service::whereIn('id', array_column($request->services, 'id'))->get();
-                    foreach ($requestedServices as $srv) {
-                        $qty = collect($request->services)->firstWhere('id', $srv->id)['quantity'] ?? 1;
-                        $servicesTotal += ($srv->price * $qty);
-                    }
-                }
+                // 👉 2. TÍNH VAT TRÊN TỔNG HÓA ĐƠN THEO % HIỆN TẠI
+                $taxableAmount = $subtotal + $servicesTotal - $totalDiscount;
+                $tax = max(0, $taxableAmount * ($systemVatRate / 100));
 
-                $totalAmount = $subtotal - $totalDiscount + $tax + $servicesTotal;
+                $totalAmount = $taxableAmount + $tax;
 
+                // 👉 3. LƯU CỨNG % VAT VÀ HOA HỒNG VÀO ĐƠN
                 $booking = Booking::create([
                     'booking_code' => 'SB-' . strtoupper(Str::random(8)),
                     'customer_id' => $customerId,
                     'hotel_id' => $request->hotel_id,
-                    'promotion_id' => $globalPromoId,         // Lưu mã sàn
-                    'hotel_promotion_id' => $hotelPromoId,    // Lưu mã KS
+                    'promotion_id' => $globalPromoId,
+                    'hotel_promotion_id' => $hotelPromoId,
 
                     'guest_name' => $request->guest_name,
                     'guest_phone' => $request->guest_phone,
@@ -210,7 +206,11 @@ class BookingController extends Controller
                     'total_amount' => $subtotal + $servicesTotal,
                     'total_price' => $totalAmount,
                     'discount_amount' => $totalDiscount,
+
                     'vat_amount' => $tax,
+                    'vat_rate' => $systemVatRate,               // Snapshot VAT
+                    'commission_rate' => $hotelCommissionRate,  // Snapshot Hoa hồng
+
                     'status' => 0,
                     'payment_status' => 0,
                 ]);
@@ -242,13 +242,13 @@ class BookingController extends Controller
 
             return response()->json([
                 'message' => 'Đặt phòng thành công.',
-                'booking_code' => $result->booking_code
+                'booking_code' => $result->booking_code,
+                'booking_id' => $result->id
             ], 201);
         } catch (\Exception $e) {
             return response()->json(['message' => $e->getMessage()], 400);
         }
     }
-
     public function myBookings(Request $request)
     {
         $bookings = Booking::with([
@@ -269,20 +269,67 @@ class BookingController extends Controller
             'data' => $bookings
         ], 200);
     }
-
     public function cancelMyBooking(Request $request, int $id)
     {
-        $booking = Booking::where('id', $id)->where('customer_id', auth('customer')->id())->first();
+        $customer = auth('sanctum')->user();
 
-        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn hàng'], 404);
+        $booking = DB::table('bookings')
+            ->where('id', $id)
+            ->where('customer_id', $customer->id)
+            ->first();
 
-        if ($booking->status !== 0) {
-            return response()->json(['message' => 'Đơn hàng đã được xử lý, không thể hủy!'], 400);
+        if (!$booking) {
+            return response()->json(['message' => 'Không tìm thấy đơn đặt phòng!'], 404);
         }
 
-        $booking->update(['status' => 4]);
+        if ($booking->status != 0 && $booking->status != 1) { // Chỉ cho hủy khi mới đặt hoặc đã xác nhận
+            return response()->json(['message' => 'Không thể hủy đơn hàng ở trạng thái này!'], 403);
+        }
 
-        return response()->json(['message' => 'Đã hủy đơn hàng thành công', 'booking' => $booking], 200);
+        // 1. Tính toán thời gian chênh lệch so với ngày Check-in
+        $now = \Carbon\Carbon::now();
+        $checkInDate = \Carbon\Carbon::parse($booking->check_in_date);
+        $hoursDifference = $now->diffInHours($checkInDate, false); // false để lấy số âm nếu đã qua ngày
+
+        if ($hoursDifference <= 0) {
+            return response()->json(['message' => 'Đã đến ngày Check-in, không thể hủy phòng!'], 403);
+        }
+
+        // 2. Kiểm tra thanh toán và áp dụng chính sách
+        $isPrepaid = false;
+        $needsRefund = false;
+        $refundAmount = 0;
+
+        $payment = DB::table('payments')->where('booking_id', $booking->id)->first();
+        if ($payment && $payment->payment_method == 4 && $payment->payment_status == 1) {
+            $isPrepaid = true;
+        }
+
+        if ($hoursDifference >= 48) {
+            // Hủy trước 48h: Hợp lệ, hủy miễn phí
+            if ($isPrepaid) {
+                $needsRefund = true;
+                $refundAmount = $payment->amount;
+            }
+        } else {
+            // Hủy trong vòng 48h: Phạt 100%
+            if ($isPrepaid) {
+                return response()->json(['message' => 'Bạn đã quá hạn hủy phòng miễn phí. Đơn này không được hoàn tiền.'], 403);
+            }
+        }
+
+        // 3. Cập nhật trạng thái đơn hàng
+        DB::table('bookings')->where('id', $id)->update([
+            'status' => 4, // 4 là trạng thái Đã hủy
+            'refund_status' => $needsRefund ? 1 : 0, // 1: Đưa vào danh sách chờ Admin xử lý hoàn tiền
+            'refund_amount' => $refundAmount,
+            'updated_at' => now()
+        ]);
+
+        return response()->json([
+            'message' => 'Hủy phòng thành công!',
+            'needs_refund' => $needsRefund
+        ], 200);
     }
 
     public function getHotelServices(int $hotelId)

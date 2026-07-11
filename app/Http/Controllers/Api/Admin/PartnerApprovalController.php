@@ -100,4 +100,26 @@ class PartnerApprovalController extends Controller
             return response()->json(['message' => 'Lỗi hệ thống: ' . $e->getMessage()], 500);
         }
     }
+    /**
+     * Cập nhật tỉ lệ hoa hồng riêng cho từng khách sạn
+     */
+    public function updateCommission(Request $request, int $hotelId)
+    {
+        $request->validate([
+            'commission_rate' => 'required|numeric|min:0|max:100'
+        ]);
+
+        try {
+            $hotel = \App\Models\Hotel::findOrFail($hotelId);
+            $hotel->commission_rate = $request->commission_rate;
+            $hotel->save();
+
+            return response()->json([
+                'message' => 'Cập nhật tỉ lệ hoa hồng thành công!',
+                'new_rate' => $hotel->commission_rate
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Lỗi hệ thống: ' . $e->getMessage()], 500);
+        }
+    }
 }

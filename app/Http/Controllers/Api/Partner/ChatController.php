@@ -19,9 +19,7 @@ class ChatController extends Controller
                 ->orderBy('id', 'desc')
                 ->get();
 
-            // Sửa đoạn map trong index()
             $formatted = $threads->map(function ($thread) {
-                // Sắp xếp tin nhắn theo thời gian tăng dần (cũ lên trước, mới xuống dưới)
                 $sortedMessages = $thread->messages->sortBy('created_at')->values();
 
                 $customerName = 'Khách hàng';
@@ -30,13 +28,16 @@ class ChatController extends Controller
                 }
                 return [
                     'id' => $thread->id,
-                    // Trong Partner/ChatController.php
-                    'full_name' => $customerName, // Đã sửa lỗi lấy tên
-                    'booking_id' => $thread->booking ? $thread->booking->booking_code : null,
+                    'full_name' => $customerName,
+
+                    // 👉 ĐÃ SỬA: Trả về ID số để làm link, và Code chữ để hiển thị
+                    'booking_id' => $thread->booking ? $thread->booking->id : null,
+                    'booking_code' => $thread->booking ? $thread->booking->booking_code : null,
+
                     'message' => $sortedMessages->isNotEmpty() ? $sortedMessages->last()->message : 'Chưa có tin nhắn',
                     'created_at' => $sortedMessages->isNotEmpty() ? $sortedMessages->last()->created_at : $thread->created_at,
                     'status' => $thread->status,
-                    'messages' => $sortedMessages // Đã sắp xếp
+                    'messages' => $sortedMessages
                 ];
             });
             return response()->json(['data' => $formatted]);

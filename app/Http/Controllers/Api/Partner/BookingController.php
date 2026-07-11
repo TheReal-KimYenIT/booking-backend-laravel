@@ -174,44 +174,57 @@ class BookingController extends Controller
 
         DB::beginTransaction();
         try {
-            $booking = Booking::with(['bookingServices', 'bookingSurcharges'])->findOrFail($bookingId);
+            $booking = Booking::with(['bookingServices', 'bookingSurcharges', 'supply_incidents'])->findOrFail($bookingId);
 
             $serviceTotal = $booking->bookingServices->sum(function ($item) {
                 return $item->price_at_booking * $item->quantity;
             });
 
             $surchargeTotal = $booking->bookingSurcharges->sum('amount');
+            $damageTotal = $booking->supply_incidents->sum(function ($item) {
+                return $item->actual_price * $item->quantity;
+            });
 
-            $finalAmount = $booking->total_amount + $serviceTotal + $surchargeTotal + $booking->vat_amount - $booking->discount_amount;
+            // 👉 TÍNH LẠI VAT THEO % VAT ĐÃ CHỐT CỦA ĐƠN NÀY
+            $vatRate = $booking->vat_rate ?? 10;
+            $taxableAmount = $booking->total_amount + $serviceTotal + $surchargeTotal + $damageTotal - $booking->discount_amount;
+            $newVatAmount = max(0, $taxableAmount * ($vatRate / 100));
 
-            Payment::create([
-                'booking_id' => $booking->id,
-                'payment_method' => $request->payment_method,
-                'payment_type' => 2,
-                'amount' => $finalAmount,
-                'payment_status' => 1,
-                'paid_at' => now(),
-            ]);
+            $finalInvoiceAmount = $taxableAmount + $newVatAmount;
 
+            $alreadyPaid = $booking->payment_status == 1 ? $booking->total_price : 0;
+            $remainingToPay = max(0, $finalInvoiceAmount - $alreadyPaid);
+
+            if ($remainingToPay > 0) {
+                Payment::create([
+                    'booking_id' => $booking->id,
+                    'payment_method' => $request->payment_method,
+                    'payment_type' => 2,
+                    'amount' => $remainingToPay,
+                    'payment_status' => 1,
+                    'paid_at' => now(),
+                ]);
+            }
+
+            // Cập nhật chốt sổ & cập nhật VAT mới nhất vào DB
             $booking->update([
                 'status' => 3,
                 'payment_status' => 1,
-                'actual_check_out_at' => now()
+                'actual_check_out_at' => now(),
+                'vat_amount' => $newVatAmount,       // 👉 Lưu lại tiền VAT thực tế
+                'total_price' => $finalInvoiceAmount
             ]);
 
             $assignments = BookingRoomAssignment::where('booking_id', $booking->id)->get();
             foreach ($assignments as $assignment) {
-                $assignment->update([
-                    'checked_out_at' => now(),
-                    'status' => 3
-                ]);
+                $assignment->update(['checked_out_at' => now(), 'status' => 3]);
                 Room::where('id', $assignment->room_id)->update(['status' => 0]);
             }
 
             DB::commit();
             return response()->json([
-                'message' => 'Trả phòng và thanh toán thành công!',
-                'final_amount_paid' => $finalAmount
+                'message' => 'Trả phòng và chốt sổ thành công!',
+                'final_amount_paid' => $remainingToPay
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -598,5 +611,93 @@ class BookingController extends Controller
         });
 
         return response()->json(['message' => 'Đã xử lý No-show thành công!']);
+    }
+
+    // ==========================================
+    // HÀM XUẤT HÓA ĐƠN PDF CHO KHÁCH HÀNG (FOLIO)
+    // ==========================================
+    public function exportInvoice(int $id)
+    {
+        try {
+            $hotelId = $this->getHotelId();
+
+            // 1. Lấy dữ liệu đơn hàng (Kèm các dịch vụ phát sinh)
+            $booking = Booking::with([
+                'details.roomType',
+                'bookingServices.service',
+                'bookingSurcharges.category', // Phụ thu
+                'supply_incidents.supply',    // Đền bù
+            ])->where('id', $id)->where('hotel_id', $hotelId)->firstOrFail();
+
+            $hotel = Hotel::find($hotelId);
+
+            // 2. Tính toán tiền (Đồng bộ với logic Frontend)
+            $roomTotal = $booking->details->sum('subtotal');
+
+            $serviceTotal = $booking->bookingServices->sum(function ($item) {
+                return $item->price_at_booking * $item->quantity;
+            });
+
+            $surchargeTotal = $booking->bookingSurcharges->sum('amount');
+
+            $damageTotal = $booking->supply_incidents->sum(function ($item) {
+                return $item->actual_price * $item->quantity;
+            });
+
+            $discount = $booking->discount_amount ?? 0;
+
+            // Tính VAT (Chỉ tính trên phần phải thu)
+            $taxableAmount = max(0, $roomTotal + $serviceTotal + $surchargeTotal + $damageTotal - $discount);
+            $vatRate = $booking->vat_rate ?? 10;
+            $vatAmount = $taxableAmount * ($vatRate / 100);
+
+            $finalTotal = $taxableAmount + $vatAmount;
+
+            $alreadyPaid = ($booking->payment_status == 1) ? $booking->total_price : 0;
+            $remaining = max(0, $finalTotal - $alreadyPaid);
+
+            $checkIn = \Carbon\Carbon::parse($booking->check_in);
+            $checkOut = \Carbon\Carbon::parse($booking->check_out);
+            $nights = $checkIn->diffInDays($checkOut);
+            $nights = $nights > 0 ? $nights : 1;
+
+            // 3. Đóng gói dữ liệu gửi qua View PDF
+            $data = [
+                'hotel' => $hotel,
+                'booking' => $booking,
+                'roomTotal' => $roomTotal,
+                'serviceTotal' => $serviceTotal,
+                'surchargeTotal' => $surchargeTotal,
+                'damageTotal' => $damageTotal,
+                'discount' => $discount,
+                'vatRate' => $vatRate,
+                'vatAmount' => $vatAmount,
+                'finalTotal' => $finalTotal,
+                'alreadyPaid' => $alreadyPaid,
+                'remaining' => $remaining,
+                'nights' => $nights,
+                'print_date' => now()->format('d/m/Y H:i:s')
+            ];
+            // 4. Render HTML và xuất PDF
+            $html = view('pdf.invoice', $data)->render();
+
+            $options = new \Dompdf\Options();
+            $options->set('defaultFont', 'DejaVu Sans'); // Hỗ trợ Tiếng Việt
+            $options->set('isRemoteEnabled', true);
+
+            $dompdf = new \Dompdf\Dompdf($options);
+            $dompdf->loadHtml($html);
+            $dompdf->setPaper('A4', 'portrait');
+            $dompdf->render();
+
+            $fileName = "Hoa_Don_{$booking->booking_code}.pdf";
+
+            return response($dompdf->output(), 200)
+                ->header('Content-Type', 'application/pdf')
+                ->header('Content-Disposition', 'attachment; filename="' . $fileName . '"');
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Lỗi xuất PDF Invoice: ' . $e->getMessage());
+            return response()->json(['message' => 'Lỗi tạo PDF: ' . $e->getMessage()], 500);
+        }
     }
 }

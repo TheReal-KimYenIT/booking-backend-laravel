@@ -25,7 +25,9 @@ class Booking extends Model
         // --- Phần Giá tiền ---
         'total_amount',
         'discount_amount',
-        'vat_amount',        // <-- THÊM VÀO: Đã có trong DB
+        'vat_amount',
+        'vat_rate',
+        'commission_rate',
         'total_price',
         'platform_fee',
 

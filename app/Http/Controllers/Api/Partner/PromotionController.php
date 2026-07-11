@@ -16,11 +16,23 @@ class PromotionController extends Controller
         $hotelId = $this->getHotelId();
         if (!$hotelId) return response()->json(['message' => 'Chưa có thông tin khách sạn'], 400);
 
-        $promotions = Promotion::where('hotel_id', $hotelId)->orderBy('created_at', 'desc')->get();
+        // Lấy toàn bộ mã khuyến mãi của Khách sạn này (Bao gồm cả Hết hạn và Còn hạn)
+        $promotions = Promotion::where('hotel_id', $hotelId)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        $now = Carbon::now();
+
+        // Gắn thêm cờ is_expired để Angular biết mã nào đã quá hạn và tô màu đỏ
+        $promotions->map(function ($promo) use ($now) {
+            $promo->is_expired = ($now > Carbon::parse($promo->end_date));
+            return $promo;
+        });
 
         return response()->json([
             'message' => 'Lấy danh sách khuyến mãi thành công',
-            'data' => $promotions // Đổi tên key thành 'data' cho chuẩn format chung
+            'data' => $promotions,       // Trả về key 'data'
+            'promotions' => $promotions  // Trả về thêm key 'promotions' để phòng hờ Angular gọi nhầm
         ], 200);
     }
 
