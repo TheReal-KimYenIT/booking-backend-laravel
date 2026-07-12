@@ -83,6 +83,8 @@ class SettlementController extends Controller
             ->join('hotels', 'bookings.hotel_id', '=', 'hotels.id')
             ->select(
                 'payments.*',
+                'bookings.status as booking_status', // 👉 Lấy thêm trạng thái đơn
+                'bookings.refund_amount',            // 👉 Lấy thêm số tiền hoàn
                 'bookings.commission_rate as booking_commission_rate',
                 'hotels.name as hotel_name',
                 'hotels.id as hotel_id'
@@ -95,19 +97,26 @@ class SettlementController extends Controller
         $savedSettlements = DB::table('settlements')
             ->where('month', $month)
             ->where('year', $year)
-            ->get()
-            ->keyBy('hotel_id');
+            ->get()->keyBy('hotel_id');
 
         $grouped = $payments->groupBy('hotel_id')->map(function ($hotelPayments, $hotelId) use ($savedSettlements) {
             $hotelName = $hotelPayments->first()->hotel_name;
 
-            $vnpayTotal = $hotelPayments->where('payment_method', 4)->sum('amount');
+            // 👉 TÍNH TOÁN LẠI: Trừ đi số tiền đã hoàn cho khách (Nếu đơn đã hủy)
+            $vnpayTotal = $hotelPayments->where('payment_method', 4)->sum(function ($p) {
+                $refund = ($p->booking_status == 4) ? ($p->refund_amount ?? 0) : 0;
+                return $p->amount - $refund;
+            });
+
             $cashTotal = $hotelPayments->whereIn('payment_method', [1, 2, 3])->sum('amount');
             $totalRevenue = $vnpayTotal + $cashTotal;
 
+            // 👉 HOA HỒNG: Chỉ tính trên số tiền thực tế (đã trừ hoàn tiền)
             $commissionTotal = $hotelPayments->sum(function ($p) {
+                $refund = ($p->booking_status == 4 && $p->payment_method == 4) ? ($p->refund_amount ?? 0) : 0;
+                $actualRevenue = $p->amount - $refund;
                 $rate = $p->booking_commission_rate ?? 15;
-                return $p->amount * ($rate / 100);
+                return max(0, $actualRevenue * ($rate / 100));
             });
 
             $payoutToHotel = $vnpayTotal - $commissionTotal;
@@ -144,23 +153,11 @@ class SettlementController extends Controller
         $m = $request->month;
         $y = $request->year;
 
-        $hotelPayments = DB::table('payments')
-            ->join('bookings', 'payments.booking_id', '=', 'bookings.id')
-            ->where('bookings.hotel_id', $hId)
-            ->whereMonth('payments.created_at', $m)
-            ->whereYear('payments.created_at', $y)
-            ->where('payments.payment_status', 1)
-            ->get();
+        // Gọi lại hàm calculateSettlement để đảm bảo tính chuẩn xác nhất
+        $allData = $this->calculateSettlement($m, $y);
+        $hotelData = collect($allData)->firstWhere('hotel_id', $hId);
 
-        $vnpay = $hotelPayments->where('payment_method', 4)->sum('amount');
-        $cash = $hotelPayments->whereIn('payment_method', [1, 2, 3])->sum('amount');
-
-        $comm = $hotelPayments->sum(function ($p) {
-            $rate = DB::table('bookings')->where('id', $p->booking_id)->value('commission_rate') ?? 15;
-            return $p->amount * ($rate / 100);
-        });
-
-        $payout = $vnpay - $comm;
+        if (!$hotelData) return response()->json(['message' => 'Lỗi tính toán dữ liệu'], 400);
 
         $proofImagePath = null;
         if ($request->hasFile('proof_image')) {
@@ -168,28 +165,20 @@ class SettlementController extends Controller
             $proofImagePath = '/storage/' . $path;
         }
 
-        $settlement = DB::table('settlements')
-            ->where('hotel_id', $hId)
-            ->where('month', $m)
-            ->where('year', $y)
-            ->first();
-
-        // Xử lý status dựa trên payout
-        $status = $payout >= 0 ? 2 : 1;
+        $settlement = DB::table('settlements')->where('hotel_id', $hId)->where('month', $m)->where('year', $y)->first();
+        $status = $hotelData['payout_to_hotel'] >= 0 ? 2 : 1;
 
         $data = [
-            'total_revenue'    => $vnpay + $cash,
-            'vnpay_total'      => $vnpay,
-            'commission_total' => $comm,
-            'payout_to_hotel'  => $payout,
+            'total_revenue'    => $hotelData['total_revenue'],
+            'vnpay_total'      => $hotelData['vnpay_total'],
+            'commission_total' => $hotelData['commission_total'],
+            'payout_to_hotel'  => $hotelData['payout_to_hotel'],
             'status'           => $status,
             'paid_at'          => now(),
             'updated_at'       => now()
         ];
 
-        if ($proofImagePath) {
-            $data['proof_image'] = $proofImagePath;
-        }
+        if ($proofImagePath) $data['proof_image'] = $proofImagePath;
 
         if ($settlement) {
             DB::table('settlements')->where('id', $settlement->id)->update($data);
@@ -200,7 +189,6 @@ class SettlementController extends Controller
             $data['created_at'] = now();
             DB::table('settlements')->insert($data);
         }
-
         return response()->json(['message' => 'Xác nhận thành công!'], 200);
     }
 }

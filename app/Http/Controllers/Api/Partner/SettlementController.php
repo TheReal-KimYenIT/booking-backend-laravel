@@ -103,36 +103,43 @@ class SettlementController extends Controller
     {
         $payments = DB::table('payments')
             ->join('bookings', 'payments.booking_id', '=', 'bookings.id')
+            ->select(
+                'payments.*',
+                'bookings.status as booking_status',
+                'bookings.refund_amount',
+                'bookings.commission_rate as booking_commission_rate'
+            )
             ->where('bookings.hotel_id', $hotelId)
             ->whereMonth('payments.created_at', $month)
             ->whereYear('payments.created_at', $year)
             ->where('payments.payment_status', 1)
             ->get();
 
-        $vnpayTotal = $payments->where('payment_method', 4)->sum('amount');
+        // 👉 TÍNH TOÁN LẠI TƯƠNG TỰ BÊN ADMIN
+        $vnpayTotal = $payments->where('payment_method', 4)->sum(function ($p) {
+            $refund = ($p->booking_status == 4) ? ($p->refund_amount ?? 0) : 0;
+            return $p->amount - $refund;
+        });
+
         $cashTotal = $payments->whereIn('payment_method', [1, 2, 3])->sum('amount');
 
         $commissionTotal = $payments->sum(function ($p) {
-            $booking = DB::table('bookings')->find($p->booking_id);
-            $rate = $booking->commission_rate ?? 15;
-            return $p->amount * ($rate / 100);
+            $refund = ($p->booking_status == 4 && $p->payment_method == 4) ? ($p->refund_amount ?? 0) : 0;
+            $actualRevenue = $p->amount - $refund;
+            $rate = $p->booking_commission_rate ?? 15;
+            return max(0, $actualRevenue * ($rate / 100));
         });
 
-        // Tìm trạng thái chốt sổ của khách sạn này
-        $saved = DB::table('settlements')
-            ->where('hotel_id', $hotelId)
-            ->where('month', $month)
-            ->where('year', $year)
-            ->first();
+        $saved = DB::table('settlements')->where('hotel_id', $hotelId)->where('month', $month)->where('year', $year)->first();
         $payoutToHotel = $vnpayTotal - $commissionTotal;
+
         return [
             'total_revenue' => $vnpayTotal + $cashTotal,
             'vnpay_total' => $vnpayTotal,
             'cash_total' => $cashTotal,
             'commission_total' => $commissionTotal,
-            'payout_to_hotel' => $payoutToHotel, // Nếu âm, tức là Sàn không phải trả mà KS phải nộp
-            'is_debt' => $payoutToHotel < 0, // Thêm flag này để frontend hiển thị dễ hơn
-            // Thông tin thanh toán
+            'payout_to_hotel' => $payoutToHotel,
+            'is_debt' => $payoutToHotel < 0,
             'status' => $saved ? $saved->status : 0,
             'proof_image' => $saved ? $saved->proof_image : null,
             'paid_at' => $saved ? $saved->paid_at : null,

@@ -31,6 +31,13 @@ class Booking extends Model
         'total_price',
         'platform_fee',
 
+        //hoàn tiền
+        'refund_status',
+        'refund_amount',
+        'refund_bank',
+        'refund_account',
+        'refund_account_name',
+
         // --- Phần Trạng thái ---
         'status',
         'payment_status',    // <-- THÊM VÀO: Đã có trong DB

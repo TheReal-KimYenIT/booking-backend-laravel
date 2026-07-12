@@ -282,52 +282,86 @@ class BookingController extends Controller
             return response()->json(['message' => 'Không tìm thấy đơn đặt phòng!'], 404);
         }
 
-        if ($booking->status != 0 && $booking->status != 1) { // Chỉ cho hủy khi mới đặt hoặc đã xác nhận
+        if ($booking->status != 0 && $booking->status != 1) {
             return response()->json(['message' => 'Không thể hủy đơn hàng ở trạng thái này!'], 403);
         }
 
-        // 1. Tính toán thời gian chênh lệch so với ngày Check-in
+        // 1. Tính toán thời gian chênh lệch so với giờ Check-in (Mặc định 14:00)
         $now = \Carbon\Carbon::now();
-        $checkInDate = \Carbon\Carbon::parse($booking->check_in_date);
-        $hoursDifference = $now->diffInHours($checkInDate, false); // false để lấy số âm nếu đã qua ngày
+        $checkInDateTime = \Carbon\Carbon::parse($booking->check_in)->setHour(14)->setMinute(0);
+        $hoursDifference = $now->diffInHours($checkInDateTime, false);
 
         if ($hoursDifference <= 0) {
-            return response()->json(['message' => 'Đã đến ngày Check-in, không thể hủy phòng!'], 403);
+            return response()->json(['message' => 'Đã qua giờ nhận phòng, không thể hủy!'], 403);
         }
-
-        // 2. Kiểm tra thanh toán và áp dụng chính sách
-        $isPrepaid = false;
-        $needsRefund = false;
-        $refundAmount = 0;
 
         $payment = DB::table('payments')->where('booking_id', $booking->id)->first();
-        if ($payment && $payment->payment_method == 4 && $payment->payment_status == 1) {
-            $isPrepaid = true;
-        }
+        $isPrepaid = ($payment && $payment->payment_method == 4 && $payment->payment_status == 1);
 
+        $refundAmount = 0;
+        $needsRefund = false;
+        $refundMessage = '';
+
+        // 2. CHÍNH SÁCH HỦY PHÒNG
         if ($hoursDifference >= 48) {
-            // Hủy trước 48h: Hợp lệ, hủy miễn phí
+            // Hủy trước 48h -> Hoàn 100%
             if ($isPrepaid) {
+                // Kiểm tra xem khách đã gửi thông tin ngân hàng chưa
+                $request->validate([
+                    'refund_bank' => 'required|string',
+                    'refund_account' => 'required|string',
+                    'refund_account_name' => 'required|string',
+                ], [
+                    'refund_bank.required' => 'Vui lòng cung cấp Tên ngân hàng để nhận tiền hoàn.',
+                    'refund_account.required' => 'Vui lòng cung cấp Số tài khoản.',
+                    'refund_account_name.required' => 'Vui lòng cung cấp Tên chủ tài khoản.',
+                ]);
+
                 $needsRefund = true;
                 $refundAmount = $payment->amount;
+                $refundMessage = 'Hủy phòng thành công. Admin sẽ chuyển khoản hoàn tiền cho bạn trong vòng 24h.';
+            } else {
+                $refundMessage = 'Hủy phòng thành công!';
             }
         } else {
-            // Hủy trong vòng 48h: Phạt 100%
+            // Hủy trong vòng 48h -> Phạt 100% (Không hoàn tiền)
             if ($isPrepaid) {
-                return response()->json(['message' => 'Bạn đã quá hạn hủy phòng miễn phí. Đơn này không được hoàn tiền.'], 403);
+                $refundMessage = 'Hủy phòng thành công. Bạn hủy trong vòng 48h nên không được hoàn tiền theo chính sách.';
+            } else {
+                $refundMessage = 'Hủy phòng thành công!';
             }
         }
 
-        // 3. Cập nhật trạng thái đơn hàng
+        // 3. Cập nhật trạng thái đơn hàng và thông tin ngân hàng (nếu có)
         DB::table('bookings')->where('id', $id)->update([
-            'status' => 4, // 4 là trạng thái Đã hủy
-            'refund_status' => $needsRefund ? 1 : 0, // 1: Đưa vào danh sách chờ Admin xử lý hoàn tiền
+            'status' => 4, // 4: Đã hủy
+            'refund_status' => $needsRefund ? 1 : 0, // 1: Đưa vào danh sách chờ Admin hoàn tiền
             'refund_amount' => $refundAmount,
+            'refund_bank' => $request->refund_bank ?? null,
+            'refund_account' => $request->refund_account ?? null,
+            'refund_account_name' => strtoupper($request->refund_account_name ?? ''),
             'updated_at' => now()
         ]);
 
+        // 4. TRẢ LẠI PHÒNG TRỐNG VÀO KHO (Room Inventory)
+        $bookingDetails = DB::table('booking_details')->where('booking_id', $booking->id)->get();
+        foreach ($bookingDetails as $detail) {
+            $checkIn = Carbon::parse($detail->check_in_date);
+            $checkOut = Carbon::parse($detail->check_out_date);
+            $nights = $checkIn->diffInDays($checkOut) ?: 1;
+
+            for ($i = 0; $i < $nights; $i++) {
+                $dateStr = $checkIn->copy()->addDays($i)->format('Y-m-d');
+                // Lưu ý: Đổi 'booked_rooms' thành tên cột số lượng phòng đã đặt trong database của bạn
+                // DB::table('room_inventories')
+                //     ->where('room_type_id', $detail->room_type_id)
+                //     ->where('apply_date', $dateStr)
+                //     ->decrement('booked_rooms', $detail->rooms_count);
+            }
+        }
+
         return response()->json([
-            'message' => 'Hủy phòng thành công!',
+            'message' => $refundMessage,
             'needs_refund' => $needsRefund
         ], 200);
     }

@@ -23,14 +23,16 @@ class TransactionController extends Controller
                     'bookings.booking_code',
                     'bookings.guest_name',
                     'bookings.guest_phone',
-                    'bookings.commission_rate as booking_commission_rate', // 👉 Ưu tiên % đã chốt trong đơn
+                    'bookings.status as booking_status',    // 👉 THÊM: Trạng thái đơn
+                    'bookings.refund_amount',               // 👉 THÊM: Tiền hoàn
+                    'bookings.commission_rate as booking_commission_rate',
                     'hotels.name as hotel_name',
                     'hotels.id as hotel_id',
-                    'hotels.commission_rate as hotel_commission_rate' // 👉 Dự phòng cho các đơn quá cũ
+                    'hotels.commission_rate as hotel_commission_rate'
                 )
                 ->whereBetween('payments.created_at', [$startDate, $endDate]);
 
-            // Lọc theo keyword (Mã đơn)
+            // Các bộ lọc
             if ($request->has('keyword') && !empty($request->query('keyword'))) {
                 $query->where('bookings.booking_code', 'like', '%' . $request->query('keyword') . '%');
             }
@@ -44,36 +46,45 @@ class TransactionController extends Controller
                 $query->where('bookings.hotel_id', $request->query('hotel_id'));
             }
 
-            // --- XỬ LÝ SỐ LIỆU TỔNG & BIỂU ĐỒ ---
-            $statsQuery = clone $query;
-            $allFilteredData = $statsQuery->get();
+            // --- XỬ LÝ SỐ LIỆU TỔNG ---
+            $allFilteredData = (clone $query)->get();
 
-            $vnpayTotal = $allFilteredData->where('payment_method', 4)->where('payment_status', 1)->sum('amount');
+            $vnpayTotal = $allFilteredData->where('payment_method', 4)->where('payment_status', 1)->sum(function ($p) {
+                $refund = ($p->booking_status == 4) ? ($p->refund_amount ?? 0) : 0;
+                return max(0, $p->amount - $refund);
+            });
             $cashTotal = $allFilteredData->where('payment_method', 1)->where('payment_status', 1)->sum('amount');
             $posTotal = $allFilteredData->where('payment_method', 2)->where('payment_status', 1)->sum('amount');
             $totalSuccessCount = $allFilteredData->where('payment_status', 1)->count();
             $totalFailedCount = $allFilteredData->where('payment_status', 2)->count();
 
-            // 👉 Tạo dữ liệu cho Biểu đồ (Doanh thu VNPAY theo ngày)
+            // Biểu đồ
             $vnpayTransactions = $allFilteredData->where('payment_method', 4)->where('payment_status', 1);
             $chartDataRaw = $vnpayTransactions->groupBy(function ($item) {
                 return Carbon::parse($item->created_at)->format('d/m/Y');
             })->map(function ($row) {
-                return $row->sum('amount');
+                return $row->sum(function ($p) {
+                    $refund = ($p->booking_status == 4) ? ($p->refund_amount ?? 0) : 0;
+                    return max(0, $p->amount - $refund);
+                });
             });
 
             // Phân trang
             $transactions = $query->orderBy('payments.created_at', 'desc')->paginate(15);
 
             $transactions->getCollection()->transform(function ($item) {
-                // Nếu đơn hàng có lưu % (đơn mới) -> Dùng % đó. Nếu không (đơn cũ) -> Dùng của KS
                 $rate = $item->booking_commission_rate ?? ($item->hotel_commission_rate ?? 15);
+                $refund = ($item->booking_status == 4 && $item->payment_method == 4) ? ($item->refund_amount ?? 0) : 0;
 
-                $item->applied_rate = $rate; // Truyền xuống Angular để hiển thị
-                $item->commission_fee = $item->amount * ($rate / 100);
-                $item->payout_amount = $item->amount - $item->commission_fee;
+                $actualRevenue = max(0, $item->amount - $refund);
+
+                $item->applied_rate = $rate;
+                $item->refund_deducted = $refund; // Gửi thông tin đã trừ hoàn tiền
+                $item->commission_fee = $actualRevenue * ($rate / 100);
+                $item->payout_amount = $actualRevenue - $item->commission_fee;
                 return $item;
             });
+
             $hotels = DB::table('hotels')->select('id', 'name')->where('status', 1)->get();
 
             return response()->json([
@@ -97,7 +108,6 @@ class TransactionController extends Controller
         }
     }
 
-    // XUẤT FILE EXCEL / CSV (Thêm cột Đối soát)
     public function exportCsv(Request $request)
     {
         $startDate = Carbon::parse($request->query('start_date', Carbon::today()->startOfMonth()->toDateString()))->startOfDay();
@@ -106,9 +116,10 @@ class TransactionController extends Controller
         $query = DB::table('payments')
             ->join('bookings', 'payments.booking_id', '=', 'bookings.id')
             ->leftJoin('hotels', 'bookings.hotel_id', '=', 'hotels.id')
-            ->select('payments.*', 'bookings.booking_code', 'bookings.guest_name', 'hotels.name as hotel_name', 'hotels.commission_rate')
+            ->select('payments.*', 'bookings.booking_code', 'bookings.guest_name', 'bookings.status as booking_status', 'bookings.refund_amount', 'hotels.name as hotel_name', 'hotels.commission_rate')
             ->whereBetween('payments.created_at', [$startDate, $endDate]);
 
+        // ... (Giữ nguyên các khối lệnh if lọc dữ liệu ở đây)
         if ($request->has('keyword') && !empty($request->query('keyword'))) {
             $query->where('bookings.booking_code', 'like', '%' . $request->query('keyword') . '%');
         }
@@ -137,16 +148,19 @@ class TransactionController extends Controller
             $file = fopen('php://output', 'w');
             fputs($file, "\xEF\xBB\xBF");
 
-            // 👉 Thêm cột Tỉ lệ %, Phí sàn, Thực trả
-            fputcsv($file, ['Thời Gian', 'Mã Đơn', 'Khách Hàng', 'Khách Sạn', 'Hình Thức', 'Mã GD VNPAY', 'Tổng Quẹt (VNĐ)', 'Tỉ lệ HH', 'Phí Sàn Thu (VNĐ)', 'Thực Trả KS (VNĐ)', 'Trạng Thái'], ';');
+            // 👉 Thêm cột Hoàn Tiền vào file CSV
+            fputcsv($file, ['Thời Gian', 'Mã Đơn', 'Khách Hàng', 'Khách Sạn', 'Hình Thức', 'Tổng Quẹt (VNĐ)', 'Đã Hoàn Khách (VNĐ)', 'Doanh Thu Thực (VNĐ)', 'Tỉ lệ HH', 'Phí Sàn Thu (VNĐ)', 'Thực Trả KS (VNĐ)', 'Trạng Thái'], ';');
 
             foreach ($transactions as $row) {
                 $methodName = $row->payment_method == 4 ? 'VNPAY' : ($row->payment_method == 1 ? 'Tiền Mặt' : 'Quẹt POS');
                 $statusName = $row->payment_status == 1 ? 'Thành Công' : ($row->payment_status == 0 ? 'Đang Chờ' : 'Thất Bại');
 
+                $refund = ($row->booking_status == 4 && $row->payment_method == 4) ? ($row->refund_amount ?? 0) : 0;
+                $actualRevenue = max(0, $row->amount - $refund);
+
                 $rate = $row->booking_commission_rate ?? ($row->hotel_commission_rate ?? 15);
-                $fee = $row->amount * ($rate / 100);
-                $payout = $row->amount - $fee;
+                $fee = $actualRevenue * ($rate / 100);
+                $payout = $actualRevenue - $fee;
 
                 fputcsv($file, [
                     $row->created_at,
@@ -154,8 +168,9 @@ class TransactionController extends Controller
                     $row->guest_name,
                     $row->hotel_name,
                     $methodName,
-                    $row->transaction_id ?? '---',
                     $row->amount,
+                    $refund,            // Tiền đã hoàn
+                    $actualRevenue,     // Doanh thu thực
                     $rate . '%',
                     $fee,
                     $payout,

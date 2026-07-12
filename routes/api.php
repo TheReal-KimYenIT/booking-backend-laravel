@@ -37,6 +37,8 @@ use App\Http\Controllers\Api\Partner\RoomInventoryController as PartnerRoomInven
 use App\Http\Controllers\Api\Partner\RoomMatrixController as PartnerRoomMatrixController;
 use App\Http\Controllers\Api\Partner\TransactionController as PartnerTransactionController;
 use App\Http\Controllers\Api\Partner\SettlementController as PartnerSettlementController;
+use App\Http\Controllers\Api\Partner\CustomerController as PartnerCustomerController;
+
 
 // 4. Nhóm Admin (Quản trị viên)
 use App\Http\Controllers\Api\Admin\PartnerApprovalController as AdminPartnerApprovalController;
@@ -49,7 +51,7 @@ use App\Http\Controllers\Api\Admin\PromotionController as AdminPromotionControll
 use App\Http\Controllers\Api\Admin\SystemSettingController as AdminSystemSettingController;
 use App\Http\Controllers\Api\Admin\TransactionController as AdminTransactionController;
 use App\Http\Controllers\Api\Admin\SettlementController as AdminSettlementController;
-
+use App\Http\Controllers\Api\Admin\RefundController as AdminRefundController;
 
 // ==========================================
 //  1. NHÓM API CÔNG KHAI (KHÔNG YÊU CẦU ĐĂNG NHẬP)
@@ -134,113 +136,119 @@ Route::middleware('auth:sanctum')->prefix('customer')->group(function () {
 // ==========================================
 // 3. NHÓM API ĐỐI TÁC KHÁCH SẠN (YÊU CẦU ĐĂNG NHẬP PARTNER)
 // ==========================================
-Route::middleware('auth:sanctum')->prefix('partner')->group(function () {
+Route::middleware('auth:sanctum')->prefix('partner')->group(
+    function () {
 
-    // -- Quản lý Hồ sơ Chủ khách sạn --
-    Route::get('/profile', [PartnerProfileController::class, 'getProfile']);
-    Route::put('/profile', [PartnerProfileController::class, 'updateProfile']);
-    Route::put('/profile/change-password', [PartnerProfileController::class, 'changePassword']);
+        // -- Quản lý Hồ sơ Chủ khách sạn --
+        Route::get('/profile', [PartnerProfileController::class, 'getProfile']);
+        Route::put('/profile', [PartnerProfileController::class, 'updateProfile']);
+        Route::put('/profile/change-password', [PartnerProfileController::class, 'changePassword']);
 
-    // -- Quản lý Thông tin Khách sạn --
-    Route::get('/hotel', [PartnerHotelController::class, 'show']);
-    Route::put('/hotel', [PartnerHotelController::class, 'update']);
-    Route::post('/hotel/images', [PartnerHotelController::class, 'uploadImage']);
-    Route::get('/dashboard-stats', [PartnerHotelController::class, 'getStats']);
-    Route::get('/hotel/amenities', [PartnerHotelController::class, 'getHotelAmenities']);
-    Route::post('/hotel/amenities', [PartnerHotelController::class, 'updateAmenities']);
+        // -- Quản lý Thông tin Khách sạn --
+        Route::get('/hotel', [PartnerHotelController::class, 'show']);
+        Route::put('/hotel', [PartnerHotelController::class, 'update']);
+        Route::post('/hotel/images', [PartnerHotelController::class, 'uploadImage']);
+        Route::get('/dashboard-stats', [PartnerHotelController::class, 'getStats']);
+        Route::get('/hotel/amenities', [PartnerHotelController::class, 'getHotelAmenities']);
+        Route::post('/hotel/amenities', [PartnerHotelController::class, 'updateAmenities']);
 
-    // -- Quản lý Loại Phòng (Hạng phòng) --
-    Route::apiResource('room-types', PartnerRoomTypeController::class)->except(['show']);
-    Route::post('/room-types/{id}/amenities', [PartnerRoomTypeController::class, 'updateAmenities']);
-    Route::post('/room-types/{id}/media', [PartnerRoomTypeController::class, 'uploadMedia']);
+        // -- Quản lý Loại Phòng (Hạng phòng) --
+        Route::apiResource('room-types', PartnerRoomTypeController::class)->except(['show']);
+        Route::post('/room-types/{id}/amenities', [PartnerRoomTypeController::class, 'updateAmenities']);
+        Route::post('/room-types/{id}/media', [PartnerRoomTypeController::class, 'uploadMedia']);
 
-    // -- Quản lý Sơ đồ Phòng vật lý --
-    Route::get('/room-amenities', [PartnerRoomController::class, 'getRoomAmenities']);
-    Route::get('/rooms', [PartnerRoomController::class, 'getRooms']);
-    Route::post('/rooms', [PartnerRoomController::class, 'storeRoom']);
-    Route::put('/rooms/{id}', [PartnerRoomController::class, 'updateRoom']);
-    Route::delete('/rooms/{id}', [PartnerRoomController::class, 'deleteRoom']);
-    Route::get('/rooms/available/{roomTypeId}', [PartnerRoomController::class, 'getAvailableRoomsByType']);
+        // -- Quản lý Sơ đồ Phòng vật lý --
+        Route::get('/room-amenities', [PartnerRoomController::class, 'getRoomAmenities']);
+        Route::get('/rooms', [PartnerRoomController::class, 'getRooms']);
+        Route::post('/rooms', [PartnerRoomController::class, 'storeRoom']);
+        Route::put('/rooms/{id}', [PartnerRoomController::class, 'updateRoom']);
+        Route::delete('/rooms/{id}', [PartnerRoomController::class, 'deleteRoom']);
+        Route::get('/rooms/available/{roomTypeId}', [PartnerRoomController::class, 'getAvailableRoomsByType']);
 
-    // -- Quản lý Dịch vụ --
-    Route::get('/services', [PartnerServiceController::class, 'getServices']);
-    Route::post('/services', [PartnerServiceController::class, 'storeService']);
-    Route::put('/services/{id}', [PartnerServiceController::class, 'updateService']);
-    Route::delete('/services/{id}', [PartnerServiceController::class, 'deleteService']);
-    Route::get('/surcharge-categories', [PartnerServiceController::class, 'getSurchargeCategories']);
-    Route::post('/bookings/{id}/surcharges', [PartnerServiceController::class, 'addBookingSurcharge']);
+        // -- Quản lý Dịch vụ --
+        Route::get('/services', [PartnerServiceController::class, 'getServices']);
+        Route::post('/services', [PartnerServiceController::class, 'storeService']);
+        Route::put('/services/{id}', [PartnerServiceController::class, 'updateService']);
+        Route::delete('/services/{id}', [PartnerServiceController::class, 'deleteService']);
+        Route::get('/surcharge-categories', [PartnerServiceController::class, 'getSurchargeCategories']);
+        Route::post('/bookings/{id}/surcharges', [PartnerServiceController::class, 'addBookingSurcharge']);
 
-    // -- Quản lý Minibar --
-    Route::get('/minibars', [PartnerServiceController::class, 'getMinibars']);
-    Route::post('/minibars', [PartnerServiceController::class, 'storeMinibar']);
-    Route::put('/minibars/{id}', [PartnerServiceController::class, 'updateMinibar']);
-    Route::delete('/minibars/{id}', [PartnerServiceController::class, 'deleteMinibar']);
+        // -- Quản lý Minibar --
+        Route::get('/minibars', [PartnerServiceController::class, 'getMinibars']);
+        Route::post('/minibars', [PartnerServiceController::class, 'storeMinibar']);
+        Route::put('/minibars/{id}', [PartnerServiceController::class, 'updateMinibar']);
+        Route::delete('/minibars/{id}', [PartnerServiceController::class, 'deleteMinibar']);
 
-    // -- Quản lý Đồ dùng tiêu hao --
-    Route::get('/supplies', [PartnerSupplyController::class, 'getSupplies']);
-    Route::post('/supplies', [PartnerSupplyController::class, 'storeSupply']);
-    Route::put('/supplies/{id}', [PartnerSupplyController::class, 'updateSupply']);
-    Route::delete('/supplies/{id}', [PartnerSupplyController::class, 'deleteSupply']);
+        // -- Quản lý Đồ dùng tiêu hao --
+        Route::get('/supplies', [PartnerSupplyController::class, 'getSupplies']);
+        Route::post('/supplies', [PartnerSupplyController::class, 'storeSupply']);
+        Route::put('/supplies/{id}', [PartnerSupplyController::class, 'updateSupply']);
+        Route::delete('/supplies/{id}', [PartnerSupplyController::class, 'deleteSupply']);
 
-    // -- Quản lý Khuyến mãi --
-    Route::patch('/promotions/{id}/end-early', [PartnerPromotionController::class, 'endEarly']);
-    Route::get('/promotions/{id}/stats', [PartnerPromotionController::class, 'stats']);
-    Route::apiResource('promotions', PartnerPromotionController::class)->only(['index', 'store', 'update']);
+        // -- Quản lý Khuyến mãi --
+        Route::patch('/promotions/{id}/end-early', [PartnerPromotionController::class, 'endEarly']);
+        Route::get('/promotions/{id}/stats', [PartnerPromotionController::class, 'stats']);
+        Route::apiResource('promotions', PartnerPromotionController::class)->only(['index', 'store', 'update']);
 
-    // -- Quản lý Đặt phòng (Check-in/Check-out/Menu) --
-    Route::get('/bookings', [PartnerBookingController::class, 'index']);
-    Route::get('/bookings/{id}', [PartnerBookingController::class, 'show']);
-    Route::get('/bookings/{id}/payment', [PartnerBookingController::class, 'getPaymentInfo']);
-    Route::get('/bookings/{id}/available-rooms', [PartnerBookingController::class, 'getAvailableRooms']);
-    Route::put('/bookings/{id}/guests', [PartnerBookingController::class, 'updateGuests']);
-    Route::put('/bookings/{id}/change-room', [PartnerBookingController::class, 'changeRoom']);
+        // -- Quản lý Đặt phòng (Check-in/Check-out/Menu) --
+        Route::get('/bookings', [PartnerBookingController::class, 'index']);
+        Route::get('/bookings/{id}', [PartnerBookingController::class, 'show']);
+        Route::get('/bookings/{id}/payment', [PartnerBookingController::class, 'getPaymentInfo']);
+        Route::get('/bookings/{id}/available-rooms', [PartnerBookingController::class, 'getAvailableRooms']);
+        Route::put('/bookings/{id}/guests', [PartnerBookingController::class, 'updateGuests']);
+        Route::put('/bookings/{id}/change-room', [PartnerBookingController::class, 'changeRoom']);
 
-    Route::get('/bookings/{id}/menu', [PartnerBookingController::class, 'getMenuAndCart']);
-    Route::post('/bookings/{id}/add-service', [PartnerBookingController::class, 'addExtraService']);
-    Route::post('/bookings/{id}/add-minibar', [PartnerBookingController::class, 'addExtraMinibar']);
-    Route::delete('/bookings/{id}/remove-service/{cartId}', [PartnerBookingController::class, 'removeExtraService']);
-    Route::put('/bookings/{id}/update-service/{cartId}', [PartnerBookingController::class, 'updateExtraService']);
-    Route::put('/bookings/{id}/notes', [PartnerBookingController::class, 'updateBookingNotes']);
+        Route::get('/bookings/{id}/menu', [PartnerBookingController::class, 'getMenuAndCart']);
+        Route::post('/bookings/{id}/add-service', [PartnerBookingController::class, 'addExtraService']);
+        Route::post('/bookings/{id}/add-minibar', [PartnerBookingController::class, 'addExtraMinibar']);
+        Route::delete('/bookings/{id}/remove-service/{cartId}', [PartnerBookingController::class, 'removeExtraService']);
+        Route::put('/bookings/{id}/update-service/{cartId}', [PartnerBookingController::class, 'updateExtraService']);
+        Route::put('/bookings/{id}/notes', [PartnerBookingController::class, 'updateBookingNotes']);
 
-    Route::put('/bookings/{id}/confirm', [PartnerBookingController::class, 'confirmBooking']);
-    Route::put('/bookings/{id}/check-out', [PartnerBookingController::class, 'checkOutAndPay']);
-    Route::put('/bookings/{id}/cancel', [PartnerBookingController::class, 'cancelBooking']);
-    Route::put('/bookings/{id}/estimated-time', [PartnerBookingController::class, 'updateEstimatedTime']);
-    Route::put('/bookings/{id}/no-show', [PartnerBookingController::class, 'markAsNoShow']);
-    Route::post('/bookings/{id}/check-in', [PartnerBookingController::class, 'checkIn']);
+        Route::put('/bookings/{id}/confirm', [PartnerBookingController::class, 'confirmBooking']);
+        Route::put('/bookings/{id}/check-out', [PartnerBookingController::class, 'checkOutAndPay']);
+        Route::put('/bookings/{id}/cancel', [PartnerBookingController::class, 'cancelBooking']);
+        Route::put('/bookings/{id}/estimated-time', [PartnerBookingController::class, 'updateEstimatedTime']);
+        Route::put('/bookings/{id}/no-show', [PartnerBookingController::class, 'markAsNoShow']);
+        Route::post('/bookings/{id}/check-in', [PartnerBookingController::class, 'checkIn']);
 
-    // -- Quản lý Phụ thu & Đền bù --
-    Route::apiResource('surcharge-categories', PartnerSurchargeCategoryController::class);
-    Route::post('/bookings/{id}/add-surcharge', [PartnerBookingController::class, 'addSurcharge']);
-    Route::delete('/bookings/{id}/remove-surcharge/{surchargeId}', [PartnerBookingController::class, 'removeSurcharge']);
-    Route::post('/bookings/{id}/add-damaged-item', [PartnerBookingController::class, 'addDamagedItem']);
-    Route::delete('/bookings/{id}/remove-damaged-item/{itemId}', [PartnerBookingController::class, 'removeDamagedItem']);
+        // -- Quản lý Phụ thu & Đền bù --
+        Route::apiResource('surcharge-categories', PartnerSurchargeCategoryController::class);
+        Route::post('/bookings/{id}/add-surcharge', [PartnerBookingController::class, 'addSurcharge']);
+        Route::delete('/bookings/{id}/remove-surcharge/{surchargeId}', [PartnerBookingController::class, 'removeSurcharge']);
+        Route::post('/bookings/{id}/add-damaged-item', [PartnerBookingController::class, 'addDamagedItem']);
+        Route::delete('/bookings/{id}/remove-damaged-item/{itemId}', [PartnerBookingController::class, 'removeDamagedItem']);
 
-    Route::get('/bookings/{id}/export-invoice', [PartnerBookingController::class, 'exportInvoice']);
+        Route::get('/bookings/{id}/export-invoice', [PartnerBookingController::class, 'exportInvoice']);
 
-    // -- Chat & Hội thoại --
-    Route::get('/chat/threads', [PartnerChatController::class, 'index']);
-    Route::post('/chat/{thread}/messages', [PartnerChatController::class, 'store']);
-    Route::put('/chat/threads/{id}/status', [PartnerChatController::class, 'updateStatus']);
+        // -- Chat & Hội thoại --
+        Route::get('/chat/threads', [PartnerChatController::class, 'index']);
+        Route::post('/chat/{thread}/messages', [PartnerChatController::class, 'store']);
+        Route::put('/chat/threads/{id}/status', [PartnerChatController::class, 'updateStatus']);
 
-    // -- Quản lý Nhân viên --
-    Route::apiResource('staffs', PartnerStaffController::class)->except(['show']);
-    Route::apiResource('roles', PartnerRoleController::class);
-    Route::get('roles', [PartnerStaffController::class, 'getRoles']);
+        // -- Quản lý Nhân viên --
+        Route::apiResource('staffs', PartnerStaffController::class)->except(['show']);
+        Route::apiResource('roles', PartnerRoleController::class);
+        Route::get('roles', [PartnerStaffController::class, 'getRoles']);
 
-    // -- Quản lý Kho phòng & Giao dịch --
-    Route::get('/room-inventory', [PartnerRoomInventoryController::class, 'index']);
-    Route::post('/room-inventory/bulk-update', [PartnerRoomInventoryController::class, 'updateBulk']);
-    Route::get('/room-matrix-grid', [PartnerRoomMatrixController::class, 'getMatrix']);
+        // -- Quản lý Kho phòng & Giao dịch --
+        Route::get('/room-inventory', [PartnerRoomInventoryController::class, 'index']);
+        Route::post('/room-inventory/bulk-update', [PartnerRoomInventoryController::class, 'updateBulk']);
+        Route::get('/room-matrix-grid', [PartnerRoomMatrixController::class, 'getMatrix']);
 
-    Route::get('/transactions', [PartnerTransactionController::class, 'index']);
+        Route::get('/transactions', [PartnerTransactionController::class, 'index']);
 
-    // -- Đối soát công nợ --
-    Route::get('/settlements', [PartnerSettlementController::class, 'index']);
-    Route::get('/settlements/export-pdf', [PartnerSettlementController::class, 'exportPdf']);
-    Route::post('/settlements/upload-proof', [PartnerSettlementController::class, 'uploadProof']);
-    Route::post('/settlements/partner-confirm', [PartnerSettlementController::class, 'partnerConfirm']);
-});
+        // -- Đối soát công nợ --
+        Route::get('/settlements', [PartnerSettlementController::class, 'index']);
+        Route::get('/settlements/export-pdf', [PartnerSettlementController::class, 'exportPdf']);
+        Route::post('/settlements/upload-proof', [PartnerSettlementController::class, 'uploadProof']);
+        Route::post('/settlements/partner-confirm', [PartnerSettlementController::class, 'partnerConfirm']);
+
+
+        Route::get('/customers', [PartnerCustomerController::class, 'index']);
+        Route::post('/customers/{id}/toggle-block', [PartnerCustomerController::class, 'toggleBlock']);
+    }
+);
 
 
 // ==========================================
@@ -284,4 +292,8 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::get('settlements', [AdminSettlementController::class, 'index']);
     Route::get('settlements/export-pdf', [AdminSettlementController::class, 'exportPdf']);
     Route::post('settlements/confirm', [AdminSettlementController::class, 'confirmPayment']);
+
+    // -- Quản lý hoàn tiền --
+    Route::get('refunds', [AdminRefundController::class, 'index']);
+    Route::put('refunds/{id}/confirm', [AdminRefundController::class, 'confirmRefund']);
 });
