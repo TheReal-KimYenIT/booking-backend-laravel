@@ -55,6 +55,28 @@ use App\Http\Controllers\Api\Admin\RefundController as AdminRefundController;
 
 
 // ==========================================
+//  0. HEALTH CHECK & DB STATUS
+// ==========================================
+Route::get('/health', function () {
+    try {
+        \Illuminate\Support\Facades\DB::connection()->getPdo();
+        $tables = \Illuminate\Support\Facades\Schema::getTableListing();
+        return response()->json([
+            'status' => 'ok',
+            'database' => 'connected',
+            'tables_count' => count($tables),
+            'tables' => array_slice($tables, 0, 10)
+        ]);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'database' => 'failed',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+});
+
+// ==========================================
 //  1. NHÓM API CÔNG KHAI (KHÔNG YÊU CẦU ĐĂNG NHẬP)
 // ==========================================
 
