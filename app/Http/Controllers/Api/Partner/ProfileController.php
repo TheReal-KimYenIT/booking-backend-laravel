@@ -9,13 +9,23 @@ use Illuminate\Support\Facades\Hash;
 
 class ProfileController extends Controller
 {
-    // Lấy thông tin cá nhân
+    // Lấy thông tin tài khoản đối tác đang đăng nhập.
     public function getProfile()
     {
+        /** @var \App\Models\Partner $partner */
         $partner = Auth::guard('partner')->user();
 
         if (!$partner) {
             return response()->json(['message' => 'Không tìm thấy thông tin tài khoản'], 404);
+        }
+
+        $partner->load('role');
+
+        if ($partner->parent_id) {
+            $owner = \App\Models\Partner::with('hotel')->find($partner->parent_id);
+            $partner->hotel = $owner ? $owner->hotel : null;
+        } else {
+            $partner->load('hotel');
         }
 
         return response()->json([
@@ -24,7 +34,7 @@ class ProfileController extends Controller
         ], 200);
     }
 
-    // Cập nhật thông tin (Chỉ cho phép đổi Tên, Họ và Số điện thoại)
+    // Cập nhật thông tin cơ bản như tên và số điện thoại.
     public function updateProfile(Request $request)
     {
         /** @var \App\Models\Partner $partner */
@@ -33,31 +43,43 @@ class ProfileController extends Controller
         $request->validate([
             'first_name' => 'required|string|max:50',
             'last_name' => 'required|string|max:100',
-            'phone' => 'nullable|string|max:15',
+            'phone' => 'nullable|string|max:15|regex:/^([0-9\s\-\+\(\)]*)$/',
+        ], [
+            'first_name.required' => 'Vui lòng nhập tên của bạn.',
+            'last_name.required' => 'Vui lòng nhập họ và tên đệm của bạn.',
+            'phone.regex' => 'Số điện thoại không đúng định dạng.'
         ]);
 
         $partner->update([
             'first_name' => $request->first_name,
             'last_name' => $request->last_name,
             'phone' => $request->phone,
-            // Không cho phép update email ở đây để đảm bảo bảo mật
         ]);
 
+        $partner->load('role');
+        if ($partner->parent_id) {
+            $owner = \App\Models\Partner::with('hotel')->find($partner->parent_id);
+            $partner->hotel = $owner ? $owner->hotel : null;
+        } else {
+            $partner->load('hotel');
+        }
+
         return response()->json([
-            'message' => 'Cập nhật hồ sơ thành công!',
+            'message' => 'Cập nhật hồ sơ tài khoản thành công!',
             'data' => $partner
         ], 200);
     }
 
-    // Đổi mật khẩu
+    // Đổi mật khẩu cho tài khoản đối tác.
     public function changePassword(Request $request)
     {
         $request->validate([
             'current_password' => 'required',
-            'new_password' => 'required|string|min:6|confirmed', // 'confirmed' bắt buộc phải có trường 'new_password_confirmation' gửi lên
+            'new_password' => ['required', 'string', 'min:8', 'confirmed', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/'], // 'confirmed' bắt buộc phải có trường 'new_password_confirmation' gửi lên
         ], [
-            'new_password.min' => 'Mật khẩu mới phải có ít nhất 6 ký tự.',
-            'new_password.confirmed' => 'Xác nhận mật khẩu mới không khớp.'
+            'new_password.min' => 'Mật khẩu mới phải có ít nhất 8 ký tự.',
+            'new_password.confirmed' => 'Xác nhận mật khẩu mới không khớp.',
+            'new_password.regex' => 'Mật khẩu mới phải chứa ít nhất 1 chữ hoa, 1 chữ thường và 1 số.'
         ]);
 
         /** @var \App\Models\Partner $partner */

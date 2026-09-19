@@ -8,12 +8,12 @@ use Illuminate\Support\Facades\DB;
 
 class FavoriteController extends Controller
 {
-    // API 1: Lấy danh sách khách sạn yêu thích của khách hàng
+    // Lấy danh sách khách sạn mà khách hàng đã đánh dấu yêu thích.
     public function getFavorites(Request $request)
     {
         $user = $request->user();
 
-        // Lấy danh sách khách sạn kèm theo ảnh thu nhỏ của nó
+        // Lấy danh sách khách sạn yêu thích kèm theo hình ảnh.
         $favorites = $user->favoriteHotels()->with(['images'])->get();
 
         return response()->json([
@@ -22,35 +22,16 @@ class FavoriteController extends Controller
         ], 200);
     }
 
-    // API 2: Bấm nút Trái tim (Thêm vào hoặc Bỏ ra khỏi danh sách)
+    // Thêm hoặc bỏ khách sạn khỏi danh sách yêu thích.
     public function toggleFavorite(Request $request, int $hotelId)
     {
-        $customerId = $request->user()->id;
+        $user = $request->user();
+        
+        $result = $user->favoriteHotels()->toggle($hotelId);
+        $isFavorite = count($result['attached']) > 0;
+        
+        $message = $isFavorite ? 'Đã thêm vào danh sách yêu thích' : 'Đã bỏ yêu thích khách sạn';
 
-        // Kiểm tra xem đã thích khách sạn này chưa
-        $exists = DB::table('favorites')
-            ->where('customer_id', $customerId)
-            ->where('hotel_id', $hotelId)
-            ->first();
-
-        if ($exists) {
-            // Nếu đã thích rồi -> Bấm lại là BỎ THÍCH (Xóa)
-            DB::table('favorites')
-                ->where('customer_id', $customerId)
-                ->where('hotel_id', $hotelId)
-                ->delete();
-
-            return response()->json(['message' => 'Đã bỏ yêu thích khách sạn', 'is_favorite' => false], 200);
-        } else {
-            // Nếu chưa thích -> THÊM VÀO
-            DB::table('favorites')->insert([
-                'customer_id' => $customerId,
-                'hotel_id' => $hotelId,
-                'created_at' => now(),
-                'updated_at' => now()
-            ]);
-
-            return response()->json(['message' => 'Đã thêm vào danh sách yêu thích', 'is_favorite' => true], 200);
-        }
+        return response()->json(['message' => $message, 'is_favorite' => $isFavorite], 200);
     }
 }

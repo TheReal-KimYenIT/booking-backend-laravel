@@ -23,9 +23,9 @@ class Partner extends Authenticatable
     }
 
     // Quan hệ: 1 Đối tác (Owner) có nhiều Khách sạn
-    public function hotels()
+    public function hotel()
     {
-        return $this->hasMany(Hotel::class, 'partner_id', 'id');
+        return $this->hasOne(Hotel::class, 'partner_id', 'id');
     }
 
     // Quan hệ: 1 Owner có nhiều Staffs (Lễ tân/Quản lý)

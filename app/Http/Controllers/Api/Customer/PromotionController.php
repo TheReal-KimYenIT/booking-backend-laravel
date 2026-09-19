@@ -9,6 +9,7 @@ use Carbon\Carbon;
 
 class PromotionController extends Controller
 {
+    // Lấy các mã khuyến mãi đang hoạt động để khách hàng xem.
     public function getActivePromotions()
     {
         $now = Carbon::now();
@@ -26,6 +27,25 @@ class PromotionController extends Controller
             ->get();
 
         // Phân loại: Mã Toàn sàn và Mã Khách sạn
+                $customer = auth('customer')->user() ?: request()->user('customer');
+        if ($customer) {
+            foreach ($promotions as $promo) {
+                if ($promo->usage_limit_per_user !== null) {
+                    $used = \App\Models\Booking::where('customer_id', $customer->id)
+                        ->where(function ($q) use ($promo) {
+                            $q->where('promotion_id', $promo->id)->orWhere('hotel_promotion_id', $promo->id);
+                        })->count();
+                    $promo->is_exhausted = ($used >= $promo->usage_limit_per_user);
+                } else {
+                    $promo->is_exhausted = false;
+                }
+            }
+        } else {
+            foreach ($promotions as $promo) {
+                $promo->is_exhausted = false;
+            }
+        }
+
         $globalPromos = $promotions->whereNull('hotel_id')->values();
         $hotelPromos = $promotions->whereNotNull('hotel_id')->values();
 
@@ -38,6 +58,7 @@ class PromotionController extends Controller
         ], 200);
     }
 
+    // Kiểm tra mã khuyến mãi có hợp lệ và tính số tiền giảm.
     public function checkPromotion(Request $request)
     {
         $request->validate([

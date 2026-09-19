@@ -15,17 +15,15 @@ use Illuminate\Support\Facades\DB;
 
 class BookingController extends Controller
 {
-    // ==========================================
-    // CÁC HÀM LẤY DỮ LIỆU ĐƠN HÀNG (DÙNG ĐƯỢC CHO LỄ TÂN)
-    // ==========================================
+    // Các hàm dưới đây dùng để quản lý đơn hàng cho phía khách sạn.
 
+    // Lấy danh sách đơn hàng của khách sạn đang đăng nhập.
     public function index(Request $request)
     {
-        // 👉 Đã sử dụng hàm thông minh từ Controller cha
         $hotelId = $this->getHotelId();
         if (!$hotelId) return response()->json(['message' => 'Chưa có thông tin khách sạn'], 400);
 
-        $bookings = Booking::with(['details.roomType'])
+        $bookings = Booking::with(['details.roomType', 'roomAssignments.room'])
             ->where('hotel_id', $hotelId)
             ->orderBy('created_at', 'desc')
             ->get();
@@ -36,6 +34,7 @@ class BookingController extends Controller
         ], 200);
     }
 
+    // Xem chi tiết một đơn hàng kèm thông tin phòng, khách, phụ thu và dịch vụ.
     public function show(int $id)
     {
         $hotelId = $this->getHotelId();
@@ -56,6 +55,7 @@ class BookingController extends Controller
         ], 200);
     }
 
+    // Lấy thông tin thanh toán của một đơn hàng.
     public function getPaymentInfo(Request $request, int $id)
     {
         $hotelId = $this->getHotelId();
@@ -75,6 +75,7 @@ class BookingController extends Controller
         ], 200);
     }
 
+    // Xác nhận đơn hàng đã được chấp nhận.
     public function confirmBooking(Request $request, int $id)
     {
         $hotelId = $this->getHotelId();
@@ -87,6 +88,7 @@ class BookingController extends Controller
         return response()->json(['message' => 'Đã xác nhận đơn hàng thành công', 'booking' => $booking], 200);
     }
 
+    // Đánh dấu đơn hàng đã nhận phòng.
     public function checkInBooking(Request $request, int $id)
     {
         $hotelId = $this->getHotelId();
@@ -99,30 +101,36 @@ class BookingController extends Controller
         return response()->json(['message' => 'Đã xử lý nhận phòng thành công', 'booking' => $booking], 200);
     }
 
+    // Hủy đơn hàng từ phía khách sạn (Đã khóa)
     public function cancelBooking(Request $request, int $id)
     {
-        $hotelId = $this->getHotelId();
-        $booking = Booking::where('id', $id)->where('hotel_id', $hotelId)->first();
-
-        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn hàng'], 404);
-
-        $booking->update(['status' => 4]);
-
-        return response()->json(['message' => 'Đã hủy đơn hàng thành công', 'booking' => $booking], 200);
+        return response()->json(['message' => 'Tính năng hủy phòng đã bị khóa. Khách sạn không được phép tự hủy đơn.'], 403);
     }
 
+    // Đánh dấu đơn hàng đã trả phòng.
     public function checkOutBooking(Request $request, int $id)
     {
         $hotelId = $this->getHotelId();
         $booking = Booking::where('id', $id)->where('hotel_id', $hotelId)->first();
 
-        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn hàng'], 404);
+        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn đặt phòng'], 404);
 
-        $booking->update(['status' => 3]);
+        $booking->update([
+            'status' => 3,
+            'actual_check_out_at' => now()
+        ]);
+
+        // Cập nhật giải phóng phòng và chuyển sang Cần dọn dẹp (status = 0)
+        $assignments = BookingRoomAssignment::where('booking_id', $booking->id)->get();
+        foreach ($assignments as $assignment) {
+            $assignment->update(['checked_out_at' => now(), 'status' => 3]);
+            Room::where('id', $assignment->room_id)->update(['status' => 0]);
+        }
 
         return response()->json(['message' => 'Đã xử lý trả phòng thành công', 'booking' => $booking], 200);
     }
 
+    // Nhận phòng thực tế và gán phòng cho khách lưu trú.
     public function checkIn(Request $request, int $bookingId)
     {
         $request->validate([
@@ -155,6 +163,7 @@ class BookingController extends Controller
                     'booking_id' => $booking->id,
                     'full_name' => $guest['full_name'],
                     'identity_number' => $guest['identity_number'] ?? null,
+                    'gender' => isset($guest['gender']) ? (int)$guest['gender'] : 1,
                 ]);
             }
 
@@ -166,6 +175,7 @@ class BookingController extends Controller
         }
     }
 
+    // Trả phòng, tính thêm chi phí và tạo thanh toán cuối cùng.
     public function checkOutAndPay(Request $request, int $bookingId)
     {
         $request->validate([
@@ -174,45 +184,45 @@ class BookingController extends Controller
 
         DB::beginTransaction();
         try {
-            $booking = Booking::with(['bookingServices', 'bookingSurcharges', 'supply_incidents'])->findOrFail($bookingId);
+            $booking = Booking::with(['details', 'bookingServices', 'bookingSurcharges', 'supply_incidents'])->findOrFail($bookingId);
 
             $serviceTotal = $booking->bookingServices->sum(function ($item) {
                 return $item->price_at_booking * $item->quantity;
             });
 
             $surchargeTotal = $booking->bookingSurcharges->sum('amount');
-            $damageTotal = $booking->supply_incidents->sum(function ($item) {
-                return $item->actual_price * $item->quantity;
-            });
+            $damageTotal = $booking->supply_incidents->sum('actual_price');
 
-            // 👉 TÍNH LẠI VAT THEO % VAT ĐÃ CHỐT CỦA ĐƠN NÀY
+            // TÍNH LẠI VAT THEO % VAT ĐÃ CHỐT CỦA ĐƠN NÀY (Không tính VAT cho khoản đền bù tài sản)
             $vatRate = $booking->vat_rate ?? 10;
-            $taxableAmount = $booking->total_amount + $serviceTotal + $surchargeTotal + $damageTotal - $booking->discount_amount;
+            $roomTotal = $booking->details->sum('subtotal');
+            $taxableAmount = $roomTotal + $serviceTotal + $surchargeTotal - $booking->discount_amount;
             $newVatAmount = max(0, $taxableAmount * ($vatRate / 100));
 
-            $finalInvoiceAmount = $taxableAmount + $newVatAmount;
+            $finalInvoiceAmount = $taxableAmount + $newVatAmount + $damageTotal;
 
-            $alreadyPaid = $booking->payment_status == 1 ? $booking->total_price : 0;
+            $alreadyPaid = $booking->payment_status == 1 ? $booking->deposit_amount : 0;
             $remainingToPay = max(0, $finalInvoiceAmount - $alreadyPaid);
 
             if ($remainingToPay > 0) {
                 Payment::create([
                     'booking_id' => $booking->id,
                     'payment_method' => $request->payment_method,
-                    'payment_type' => 2,
                     'amount' => $remainingToPay,
                     'payment_status' => 1,
                     'paid_at' => now(),
                 ]);
             }
 
-            // Cập nhật chốt sổ & cập nhật VAT mới nhất vào DB
+            // Cập nhật chốt sổ & cập nhật VAT, tổng tiền mới nhất vào DB
+            $newPlatformFee = $finalInvoiceAmount * ($booking->commission_rate / 100);
             $booking->update([
                 'status' => 3,
                 'payment_status' => 1,
                 'actual_check_out_at' => now(),
-                'vat_amount' => $newVatAmount,       // 👉 Lưu lại tiền VAT thực tế
-                'total_price' => $finalInvoiceAmount
+                'vat_amount' => $newVatAmount,
+                'total_amount' => $finalInvoiceAmount,
+                'platform_fee' => $newPlatformFee
             ]);
 
             $assignments = BookingRoomAssignment::where('booking_id', $booking->id)->get();
@@ -223,7 +233,7 @@ class BookingController extends Controller
 
             DB::commit();
             return response()->json([
-                'message' => 'Trả phòng và chốt sổ thành công!',
+                'message' => 'Trả phòng và hoàn tất thanh toán thành công!',
                 'final_amount_paid' => $remainingToPay
             ]);
         } catch (\Exception $e) {
@@ -232,21 +242,23 @@ class BookingController extends Controller
         }
     }
 
+    // Lấy danh sách phòng còn trống để hỗ trợ chuyển phòng hoặc gán phòng.
     public function getAvailableRooms(Request $request, int $id)
     {
         $hotelId = $this->getHotelId();
 
-        $booking = Booking::with('details')->where('id', $id)->where('hotel_id', $hotelId)->first();
+        $booking = Booking::with('details.roomType')->where('id', $id)->where('hotel_id', $hotelId)->first();
 
-        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn hàng'], 404);
+        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn đặt phòng'], 404);
 
-        $roomTypeId = $booking->details->first()->room_type_id ?? null;
+        $roomTypeIds = $booking->details->pluck('room_type_id')->filter()->unique()->toArray();
 
-        if (!$roomTypeId) {
+        if (empty($roomTypeIds)) {
             return response()->json(['message' => 'Chưa có dữ liệu loại phòng', 'rooms' => []], 200);
         }
 
-        $availableRooms = Room::where('room_type_id', $roomTypeId)
+        $availableRooms = Room::with('roomType')
+            ->whereIn('room_type_id', $roomTypeIds)
             ->where('status', 1)
             ->get();
 
@@ -264,13 +276,14 @@ class BookingController extends Controller
         $booking = Booking::findOrFail($id);
 
         if ($booking->status >= 3) {
-            return response()->json(['message' => 'Đơn hàng đã chốt sổ, không thể sửa thông tin khách!'], 403);
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng, không thể sửa thông tin khách!'], 403);
         }
 
         $validated = $request->validate([
             'guests' => 'array',
             'guests.*.full_name' => 'required|string|max:255',
             'guests.*.identity_number' => 'nullable|string|max:50',
+            'guests.*.gender' => 'nullable|integer|in:1,2,3',
         ]);
 
         DB::beginTransaction();
@@ -283,7 +296,8 @@ class BookingController extends Controller
                     $guestsData[] = [
                         'booking_id' => $id,
                         'full_name' => $guest['full_name'],
-                        'identity_number' => $guest['identity_number'] ?? null
+                        'identity_number' => $guest['identity_number'] ?? null,
+                        'gender' => isset($guest['gender']) ? (int)$guest['gender'] : 1
                     ];
                 }
                 \App\Models\BookingGuest::insert($guestsData);
@@ -304,7 +318,7 @@ class BookingController extends Controller
         $booking = Booking::findOrFail($id);
 
         if ($booking->status >= 3) {
-            return response()->json(['message' => 'Đơn hàng đã chốt sổ, không thể đổi phòng!'], 403);
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng, không thể đổi phòng!'], 403);
         }
 
         $validated = $request->validate([
@@ -345,7 +359,7 @@ class BookingController extends Controller
         $booking = Booking::findOrFail($id);
 
         if ($booking->status >= 3) {
-            return response()->json(['message' => 'Đơn hàng đã chốt sổ, không thể sửa ghi chú!'], 403);
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng, không thể sửa ghi chú!'], 403);
         }
 
         $validated = $request->validate([
@@ -407,7 +421,7 @@ class BookingController extends Controller
         ]);
         $booking = \App\Models\Booking::find($id);
         if ($booking && $booking->status >= 3) {
-            return response()->json(['message' => 'Đơn hàng đã thanh toán và chốt sổ. Không thể chỉnh sửa!'], 403);
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
         }
         \App\Models\BookingService::create([
             'booking_id' => $id,
@@ -432,7 +446,7 @@ class BookingController extends Controller
         ]);
         $booking = \App\Models\Booking::find($id);
         if ($booking && $booking->status >= 3) {
-            return response()->json(['message' => 'Đơn hàng đã thanh toán và chốt sổ. Không thể chỉnh sửa!'], 403);
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
         }
         \App\Models\BookingService::create([
             'booking_id' => $id,
@@ -454,14 +468,14 @@ class BookingController extends Controller
         ]);
         $booking = \App\Models\Booking::find($id);
         if ($booking && $booking->status >= 3) {
-            return response()->json(['message' => 'Đơn hàng đã thanh toán và chốt sổ. Không thể chỉnh sửa!'], 403);
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
         }
         $cartItem = \App\Models\BookingService::where('id', $cartId)
             ->where('booking_id', $id)
             ->first();
 
         if (!$cartItem) {
-            return response()->json(['message' => 'Không tìm thấy món'], 404);
+            return response()->json(['message' => 'Không tìm thấy dịch vụ/minibar'], 404);
         }
 
         $cartItem->update([
@@ -476,7 +490,7 @@ class BookingController extends Controller
     {
         $booking = \App\Models\Booking::find($id);
         if ($booking && $booking->status >= 3) {
-            return response()->json(['message' => 'Đơn hàng đã thanh toán và chốt sổ. Không thể chỉnh sửa!'], 403);
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
         }
 
         $cartItem = \App\Models\BookingService::where('id', $cartId)
@@ -484,12 +498,12 @@ class BookingController extends Controller
             ->first();
 
         if (!$cartItem) {
-            return response()->json(['message' => 'Không tìm thấy món này trong giỏ hàng'], 404);
+            return response()->json(['message' => 'Không tìm thấy dịch vụ/minibar này trong danh sách'], 404);
         }
 
         $cartItem->delete();
 
-        return response()->json(['message' => 'Đã xóa món thành công!'], 200);
+        return response()->json(['message' => 'Đã xóa dịch vụ/minibar thành công!'], 200);
     }
 
 
@@ -501,13 +515,16 @@ class BookingController extends Controller
             'note' => 'nullable|string'
         ]);
 
-        $surcharge = DB::table('booking_surcharges')->insert([
+        $booking = Booking::find($id);
+        if ($booking && $booking->status >= 3) {
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
+        }
+
+        $surcharge = \App\Models\BookingSurcharge::create([
             'booking_id' => $id,
             'surcharge_category_id' => $request->surcharge_category_id,
             'amount' => $request->amount,
             'note' => $request->note,
-            'created_at' => now(),
-            'updated_at' => now(),
         ]);
 
         return response()->json([
@@ -518,6 +535,11 @@ class BookingController extends Controller
 
     public function removeSurcharge(int $id, int $surchargeId)
     {
+        $booking = Booking::find($id);
+        if ($booking && $booking->status >= 3) {
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
+        }
+
         $deleted = DB::table('booking_surcharges')
             ->where('booking_id', $id)
             ->where('id', $surchargeId)
@@ -545,6 +567,11 @@ class BookingController extends Controller
             'note' => 'nullable|string'
         ]);
 
+        $booking = Booking::find($id);
+        if ($booking && $booking->status >= 3) {
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
+        }
+
         DB::table('supply_incidents')->insert([
             'booking_id' => $id,
             'supply_id' => $request->supply_id,
@@ -552,18 +579,22 @@ class BookingController extends Controller
             'quantity' => $request->quantity,
             'actual_price' => $request->actual_price,
             'reason' => $request->note,
-            'reported_by' => auth('partner')->id() ?? 1, // 👉 Nếu kỹ tính thì bạn có thể giữ nguyên vì nó lưu lại đúng người đã khai báo lỗi
+            'reported_by' => auth('partner')->id() ?? 1, // có thể giữ nguyên vì nó lưu lại đúng người đã khai báo lỗi
             'created_at' => now(),
         ]);
 
-        return response()->json(['message' => 'Đã thêm phí đền bù tài sản thành công!'], 200);
+        return response()->json(['message' => 'Đã thêm phí bồi hoàn tài sản thành công!'], 200);
     }
 
-    // 2. Xóa Đền bù vật tư
     public function removeDamagedItem(int $id, int $itemId)
     {
+        $booking = Booking::find($id);
+        if ($booking && $booking->status >= 3) {
+            return response()->json(['message' => 'Đơn đặt phòng đã hoàn tất trả phòng. Không thể chỉnh sửa!'], 403);
+        }
+
         DB::table('supply_incidents')->where('booking_id', $id)->where('id', $itemId)->delete();
-        return response()->json(['message' => 'Đã xóa khoản đền bù thành công!'], 200);
+        return response()->json(['message' => 'Đã xóa khoản bồi hoàn thành công!'], 200);
     }
 
 
@@ -586,19 +617,18 @@ class BookingController extends Controller
     }
 
     // 2. ĐÁNH DẤU KHÁCH KHÔNG ĐẾN (NO-SHOW)
-    // 👉 Thêm vào class BookingController
     public function markAsNoShow(int $id)
     {
         $hotelId = $this->getHotelId();
         $booking = Booking::where('id', $id)->where('hotel_id', $hotelId)->with('roomAssignments')->first();
 
-        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn hàng'], 404);
-        if ($booking->status != 1) return response()->json(['message' => 'Chỉ đơn hàng đã xác nhận mới có thể đánh dấu No-show'], 400);
+        if (!$booking) return response()->json(['message' => 'Không tìm thấy đơn đặt phòng'], 404);
+        if ($booking->status != 1) return response()->json(['message' => 'Chỉ đơn đặt phòng đã xác nhận mới có thể đánh dấu No-Show'], 400);
 
         DB::transaction(function () use ($booking) {
             // Nếu khách chưa cọc/thanh toán, ta hủy doanh thu để kế toán không bị lệch
             if ($booking->payment_status == 0) {
-                $booking->update(['total_amount' => 0, 'total_price' => 0]);
+                $booking->update(['total_amount' => 0]);
             }
 
             $booking->update(['status' => 5]); // 5: Trạng thái No-show
@@ -606,11 +636,29 @@ class BookingController extends Controller
             // Giải phóng phòng vật lý về trạng thái 1 (Trống)
             if ($booking->roomAssignments->isNotEmpty()) {
                 $roomIds = $booking->roomAssignments->pluck('room_id');
-                Room::whereIn('id', $roomIds)->update(['status' => 1]);
+                \App\Models\Room::whereIn('id', $roomIds)->update(['status' => 1]);
+            }
+
+            // HOÀN TRẢ LẠI KHO PHÒNG VÀO DATABASE
+            $checkInDate = \Carbon\Carbon::parse($booking->check_in);
+            $checkOutDate = \Carbon\Carbon::parse($booking->check_out);
+            $bookingDetails = \App\Models\BookingDetail::where('booking_id', $booking->id)->get();
+
+            foreach ($bookingDetails as $detail) {
+                for ($currentDate = $checkInDate->copy(); $currentDate->lt($checkOutDate); $currentDate->addDay()) {
+                    $dateStr = $currentDate->format('Y-m-d');
+                    $inventory = \App\Models\RoomInventory::where('room_type_id', $detail->room_type_id)
+                        ->where('apply_date', $dateStr)
+                        ->first();
+                    if ($inventory) {
+                        $inventory->available_allotment += $detail->rooms_count;
+                        $inventory->save();
+                    }
+                }
             }
         });
 
-        return response()->json(['message' => 'Đã xử lý No-show thành công!']);
+        return response()->json(['message' => 'Đã ghi nhận No-Show và giải phóng phòng thành công!']);
     }
 
     // ==========================================
@@ -621,15 +669,16 @@ class BookingController extends Controller
         try {
             $hotelId = $this->getHotelId();
 
-            // 1. Lấy dữ liệu đơn hàng (Kèm các dịch vụ phát sinh)
+            // 1. Lấy dữ liệu đơn hàng (Kèm các dịch vụ phát sinh và phòng vật lý)
             $booking = Booking::with([
                 'details.roomType',
+                'roomAssignments.room',
                 'bookingServices.service',
                 'bookingSurcharges.category', // Phụ thu
                 'supply_incidents.supply',    // Đền bù
             ])->where('id', $id)->where('hotel_id', $hotelId)->firstOrFail();
 
-            $hotel = Hotel::find($hotelId);
+            $hotel = Hotel::with('partner')->find($hotelId);
 
             // 2. Tính toán tiền (Đồng bộ với logic Frontend)
             $roomTotal = $booking->details->sum('subtotal');
@@ -640,31 +689,44 @@ class BookingController extends Controller
 
             $surchargeTotal = $booking->bookingSurcharges->sum('amount');
 
-            $damageTotal = $booking->supply_incidents->sum(function ($item) {
-                return $item->actual_price * $item->quantity;
-            });
+            $damageTotal = $booking->supply_incidents->sum('actual_price');
 
             $discount = $booking->discount_amount ?? 0;
 
-            // Tính VAT (Chỉ tính trên phần phải thu)
-            $taxableAmount = max(0, $roomTotal + $serviceTotal + $surchargeTotal + $damageTotal - $discount);
+            // Tính VAT (Chỉ tính trên khoản thu dịch vụ, không tính tiền đền bù tài sản)
+            $taxableAmount = max(0, $roomTotal + $serviceTotal + $surchargeTotal - $discount);
             $vatRate = $booking->vat_rate ?? 10;
             $vatAmount = $taxableAmount * ($vatRate / 100);
 
-            $finalTotal = $taxableAmount + $vatAmount;
+            $finalTotal = $taxableAmount + $vatAmount + $damageTotal;
 
-            $alreadyPaid = ($booking->payment_status == 1) ? $booking->total_price : 0;
-            $remaining = max(0, $finalTotal - $alreadyPaid);
+            $depositAmount = ($booking->payment_status == 1) ? (float)($booking->deposit_amount ?? 0) : 0;
 
-            $checkIn = \Carbon\Carbon::parse($booking->check_in);
-            $checkOut = \Carbon\Carbon::parse($booking->check_out);
-            $nights = $checkIn->diffInDays($checkOut);
-            $nights = $nights > 0 ? $nights : 1;
+            if ($booking->status == 3) {
+                $paidAtCheckout = max(0, $finalTotal - $depositAmount);
+                $alreadyPaid = $finalTotal;
+                $remaining = 0;
+            } else {
+                $paidAtCheckout = 0;
+                $alreadyPaid = $depositAmount;
+                $remaining = max(0, $finalTotal - $alreadyPaid);
+            }
+
+            // Tính số đêm theo ngày lịch
+            $checkIn = \Carbon\Carbon::parse($booking->check_in)->startOfDay();
+            $checkOut = \Carbon\Carbon::parse($booking->check_out)->startOfDay();
+            $nights = max(1, (int)$checkIn->diffInDays($checkOut));
+
+            // Gom chuỗi số phòng vật lý
+            $assignedRooms = $booking->roomAssignments->isNotEmpty()
+                ? $booking->roomAssignments->map(fn($ra) => 'P.' . ($ra->room->room_name ?? $ra->room->name ?? ''))->implode(', ')
+                : 'Chờ xếp phòng';
 
             // 3. Đóng gói dữ liệu gửi qua View PDF
             $data = [
                 'hotel' => $hotel,
                 'booking' => $booking,
+                'assignedRooms' => $assignedRooms,
                 'roomTotal' => $roomTotal,
                 'serviceTotal' => $serviceTotal,
                 'surchargeTotal' => $surchargeTotal,
@@ -673,6 +735,8 @@ class BookingController extends Controller
                 'vatRate' => $vatRate,
                 'vatAmount' => $vatAmount,
                 'finalTotal' => $finalTotal,
+                'depositAmount' => $depositAmount,
+                'paidAtCheckout' => $paidAtCheckout,
                 'alreadyPaid' => $alreadyPaid,
                 'remaining' => $remaining,
                 'nights' => $nights,

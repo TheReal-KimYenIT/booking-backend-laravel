@@ -4,14 +4,13 @@ namespace App\Http\Controllers\Api\Partner;
 
 use App\Http\Controllers\Controller;
 use App\Models\Hotel;
-use App\Models\Supply; // Đảm bảo bạn đã có model Supply nhé
+use App\Models\Supply;
 use Illuminate\Http\Request;
 
 class SupplyController extends Controller
 {
     public function getSupplies(Request $request)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
         if (!$hotelId) return response()->json(['message' => 'Chưa có thông tin khách sạn'], 400);
 
@@ -22,19 +21,19 @@ class SupplyController extends Controller
 
     public function storeSupply(Request $request)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
         if (!$hotelId) return response()->json(['message' => 'Chưa có thông tin khách sạn'], 400);
 
         $request->validate([
             'name' => 'required|string|max:100',
-            'price' => 'required|numeric' // Frontend vẫn gửi 'price', ta map nó vào 'price_per_unit'
+            // FIX BUG: Chống nhập số âm để khách không được 'hoàn tiền' ngược lại khi làm hỏng đồ
+            'price' => 'required|numeric|min:0|max:99999999' 
         ]);
 
         $supply = new Supply();
         $supply->hotel_id = $hotelId; // Dùng trực tiếp $hotelId
         $supply->name = $request->name;
-        $supply->price_per_unit = $request->price; // Lưu vào đúng cột DB
+        $supply->price_per_unit = $request->price;
         $supply->status = 1;
         $supply->save();
 
@@ -43,14 +42,20 @@ class SupplyController extends Controller
 
     public function updateSupply(Request $request, int $id)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
 
         $supply = Supply::where('id', $id)->where('hotel_id', $hotelId)->first();
         if (!$supply) return response()->json(['message' => 'Không tìm thấy vật tư'], 404);
 
+        // FIX BUG: Bổ sung Validate cho hàm Update (trước đó quên không có)
+        $request->validate([
+            'name' => 'nullable|string|max:100',
+            'price' => 'nullable|numeric|min:0|max:99999999',
+            'status' => 'nullable|in:0,1'
+        ]);
+
         if ($request->has('name')) $supply->name = $request->name;
-        if ($request->has('price')) $supply->price_per_unit = $request->price; // Lưu vào đúng cột DB
+        if ($request->has('price')) $supply->price_per_unit = $request->price;
         if ($request->has('status')) $supply->status = $request->status;
         $supply->save();
 
@@ -59,15 +64,19 @@ class SupplyController extends Controller
 
     public function deleteSupply(int $id)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
 
         $supply = Supply::where('id', $id)->where('hotel_id', $hotelId)->first();
         if (!$supply) return response()->json(['message' => 'Không tìm thấy vật tư'], 404);
 
-        $supply->status = 0; // Chuyển trạng thái về 0 thay vì xóa cứng
-        $supply->save();
+        if ($supply->incidents()->exists()) {
+            return response()->json([
+                'message' => 'Không thể xóa vĩnh viễn vì vật tư này đã có trong lịch sử sự cố đền bù! Bạn hãy chọn "Ngừng áp dụng" để dừng tính phí.'
+            ], 400);
+        }
 
-        return response()->json(['message' => 'Đã xóa vật tư!'], 200);
+        $supply->delete();
+
+        return response()->json(['message' => 'Đã xóa vật tư khỏi danh mục thành công!'], 200);
     }
 }

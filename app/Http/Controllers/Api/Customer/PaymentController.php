@@ -10,18 +10,36 @@ use Illuminate\Support\Facades\DB;
 
 class PaymentController extends Controller
 {
-    // 1. TẠO LINK THANH TOÁN GỬI CHO REACT
+    // Tạo link thanh toán VNPay cho đơn đặt phòng.
     public function createVnpayUrl(Request $request)
     {
         $request->validate([
             'booking_id' => 'required|exists:bookings,id',
-            'bank_code' => 'nullable|string' // Có thể truyền 'VNBANK' hoặc 'INTCARD'
+            'bank_code' => 'nullable|string'
         ]);
 
         $booking = Booking::find($request->booking_id);
 
         if ($booking->payment_status == 1) {
-            return response()->json(['message' => 'Đơn hàng này đã được thanh toán'], 400);
+            return response()->json(['message' => 'Đơn đặt phòng này đã được thanh toán'], 400);
+        }
+
+        if ($booking->status == 4) {
+            return response()->json(['message' => 'Đơn đặt phòng này đã bị hủy, không thể tiếp tục thanh toán.'], 400);
+        }
+
+        // Kiểm tra quá hạn 15 phút thanh toán cọc
+        if ($booking->created_at && $booking->created_at->lt(now()->subMinutes(15))) {
+            \App\Services\BookingCleanupService::cleanupExpiredUnpaid(15);
+            return response()->json(['message' => 'Đơn đặt phòng đã hết hạn thanh toán (quá 15 phút). Vui lòng đặt lại phòng mới.'], 400);
+        }
+
+        if (str_starts_with($booking->booking_code, 'BK')) {
+            $newBookingCode = 'SB' . substr($booking->booking_code, 2);
+
+            // Cập nhật lại mã mới vào DB để đồng bộ
+            $booking->update(['booking_code' => $newBookingCode]);
+            $booking->booking_code = $newBookingCode;
         }
 
         $vnp_TmnCode = env('VNPAY_TMN_CODE');
@@ -29,12 +47,16 @@ class PaymentController extends Controller
         $vnp_Url = env('VNPAY_URL');
         $vnp_Returnurl = env('VNPAY_RETURN_URL');
 
-        $vnp_TxnRef = $booking->booking_code . '_' . time(); // Mã giao dịch duy nhất
+        $vnp_TxnRef = $booking->booking_code . '_' . time();
+
         $vnp_OrderInfo = "Thanh toan don dat phong " . $booking->booking_code;
         $vnp_OrderType = 'billpayment';
-        $vnp_Amount = $booking->total_price * 100; // VNPAY yêu cầu nhân 100
+        $vnp_Amount = $booking->deposit_amount * 100;
         $vnp_Locale = 'vn';
         $vnp_IpAddr = $request->ip();
+        if (empty($vnp_IpAddr) || $vnp_IpAddr === '::1') {
+            $vnp_IpAddr = '127.0.0.1';
+        }
 
         $inputData = array(
             "vnp_Version" => "2.1.0",
@@ -55,7 +77,6 @@ class PaymentController extends Controller
             $inputData['vnp_BankCode'] = $request->bank_code;
         }
 
-        // Tạo mã Hash (Chữ ký điện tử) để bảo mật
         ksort($inputData);
         $query = "";
         $i = 0;
@@ -72,7 +93,7 @@ class PaymentController extends Controller
 
         $vnp_Url = $vnp_Url . "?" . $query;
         if (isset($vnp_HashSecret)) {
-            $vnpSecureHash =   hash_hmac('sha512', $hashdata, $vnp_HashSecret);
+            $vnpSecureHash = hash_hmac('sha512', $hashdata, $vnp_HashSecret);
             $vnp_Url .= 'vnp_SecureHash=' . $vnpSecureHash;
         }
 
@@ -82,12 +103,14 @@ class PaymentController extends Controller
         ], 200);
     }
 
-    // 2. NHẬN KẾT QUẢ TỪ VNPAY (IPN WEBHOOK) ĐỂ LƯU DATABASE
+    // Nhận kết quả thanh toán từ VNPay và cập nhật trạng thái đơn hàng.
     public function vnpayIpn(Request $request)
     {
         $inputData = array();
         $returnData = array();
-        foreach ($_GET as $key => $value) {
+        $allRequestData = $request->all();
+
+        foreach ($allRequestData as $key => $value) {
             if (substr($key, 0, 4) == "vnp_") {
                 $inputData[$key] = $value;
             }
@@ -110,8 +133,15 @@ class PaymentController extends Controller
         $vnp_HashSecret = env('VNPAY_HASH_SECRET');
         $secureHash = hash_hmac('sha512', $hashData, $vnp_HashSecret);
 
-        $vnp_TxnRef = $inputData['vnp_TxnRef']; // Định dạng: SB-XYZ_1699999999
-        $bookingCode = explode('_', $vnp_TxnRef)[0];
+        $vnp_TxnRef = $inputData['vnp_TxnRef'];
+
+        $parts = explode('_', $vnp_TxnRef);
+        $bookingCode = $parts[0];
+
+        // Kiểm tra an toàn: Mã phải bắt đầu bằng BK hoặc SB
+        if (!str_starts_with($bookingCode, 'BK') && !str_starts_with($bookingCode, 'SB')) {
+            return response()->json(['RspCode' => '01', 'Message' => 'Invalid Order Prefix']);
+        }
 
         try {
             if ($secureHash == $vnp_SecureHash) {
@@ -123,17 +153,15 @@ class PaymentController extends Controller
 
                             DB::beginTransaction();
                             try {
-                                // 1. Cập nhật trạng thái đơn hàng: Đã thanh toán & Đã xác nhận (1)
                                 $booking->update([
                                     'payment_status' => 1,
                                     'status' => 1
                                 ]);
 
-                                // 2. Lưu vào bảng payments
                                 Payment::create([
                                     'booking_id' => $booking->id,
-                                    'transaction_id' => $inputData['vnp_TransactionNo'], // Lưu mã gd của VNPAY
-                                    'payment_method' => 4, // 4 = VNPAY
+                                    'transaction_id' => $inputData['vnp_TransactionNo'],
+                                    'payment_method' => 4, // 4 là mã quy ước cho VNPAY/Online
                                     'amount' => $inputData['vnp_Amount'] / 100,
                                     'payment_status' => 1,
                                     'paid_at' => now(),
@@ -144,9 +172,10 @@ class PaymentController extends Controller
                             } catch (\Exception $e) {
                                 DB::rollBack();
                                 $returnData['RspCode'] = '99';
-                                $returnData['Message'] = 'Unknown error';
+                                $returnData['Message'] = 'Database Error';
                             }
                         } else {
+                            // Giao dịch không thành công từ VNPAY (khách hủy, lỗi thẻ...)
                             $returnData['RspCode'] = '00';
                             $returnData['Message'] = 'Payment Failed';
                         }

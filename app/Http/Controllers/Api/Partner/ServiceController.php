@@ -51,6 +51,12 @@ class ServiceController extends Controller
         $service = Service::where('id', $id)->where('hotel_id', $hotelId)->first();
         if (!$service) return response()->json(['message' => 'Không tìm thấy dịch vụ'], 404);
 
+        $request->validate([
+            'name' => 'required|string|max:100',
+            'price' => 'required|numeric|min:0',
+            'unit' => 'required|string|max:50',
+        ]);
+
         $service->name = $request->name;
         $service->description = $request->description;
         $service->price = $request->price;
@@ -59,7 +65,7 @@ class ServiceController extends Controller
         $service->status = $request->status ?? 1;
         $service->save();
 
-        return response()->json(['message' => 'Cập nhật thành công!'], 200);
+        return response()->json(['message' => 'Cập nhật dịch vụ thành công!'], 200);
     }
 
     public function deleteService(int $id)
@@ -69,10 +75,23 @@ class ServiceController extends Controller
         $service = Service::where('id', $id)->where('hotel_id', $hotelId)->first();
         if (!$service) return response()->json(['message' => 'Không tìm thấy dịch vụ'], 404);
 
-        $service->status = 0;
-        $service->save();
+        $hasBookings = \App\Models\BookingService::where('service_id', $id)->exists();
+        if ($hasBookings) {
+            $service->status = 0;
+            $service->save();
 
-        return response()->json(['message' => 'Đã ngừng cung cấp dịch vụ này!'], 200);
+            return response()->json([
+                'message' => 'Dịch vụ này đã có đơn đặt phòng sử dụng, hệ thống đã tự động chuyển sang trạng thái "Ngừng cung cấp" để bảo toàn lịch sử đơn.',
+                'action' => 'deactivated'
+            ], 200);
+        }
+
+        $service->delete();
+
+        return response()->json([
+            'message' => 'Đã xóa hoàn toàn dịch vụ khỏi danh sách!',
+            'action' => 'deleted'
+        ], 200);
     }
 
     // === 2. MINIBAR (TYPE 2) ===
@@ -90,7 +109,12 @@ class ServiceController extends Controller
         $hotelId = $this->getHotelId();
         if (!$hotelId) return response()->json(['message' => 'Chưa có thông tin'], 400);
 
-        $request->validate(['name' => 'required', 'price' => 'required|numeric', 'quantity' => 'required|integer']);
+        $request->validate([
+            'name' => 'required|string|max:100',
+            'price' => 'required|numeric|min:0',
+            'quantity' => 'required|integer|min:0',
+            'unit' => 'nullable|string|max:50'
+        ]);
 
         $service = new Service();
         $service->hotel_id = $hotelId;
@@ -98,7 +122,8 @@ class ServiceController extends Controller
         $service->description = $request->description;
         $service->price = $request->price;
         $service->quantity = $request->quantity;
-        $service->icon = $request->icon;
+        $service->unit = $request->unit ?? 'Món';
+        $service->icon = $request->icon ?? '🥤';
         $service->type = 2;
         $service->status = $request->status ?? 1;
         $service->save();
@@ -111,17 +136,27 @@ class ServiceController extends Controller
         $hotelId = $this->getHotelId();
 
         $service = Service::where('id', $id)->where('hotel_id', $hotelId)->first();
-        if (!$service) return response()->json(['message' => 'Không tìm thấy'], 404);
+        if (!$service) return response()->json(['message' => 'Không tìm thấy món Minibar'], 404);
+
+        $request->validate([
+            'name' => 'required|string|max:100',
+            'price' => 'required|numeric|min:0',
+            'quantity' => 'required|integer|min:0',
+            'unit' => 'nullable|string|max:50'
+        ]);
 
         $service->name = $request->name;
         $service->description = $request->description;
         $service->price = $request->price;
-        $service->quantity = $request->quantity ?? 0;
+        $service->quantity = $request->quantity;
+        if ($request->filled('unit')) {
+            $service->unit = $request->unit;
+        }
         $service->icon = $request->icon;
         $service->status = $request->status ?? 1;
         $service->save();
 
-        return response()->json(['message' => 'Cập nhật thành công!'], 200);
+        return response()->json(['message' => 'Cập nhật món Minibar thành công!'], 200);
     }
 
     public function deleteMinibar(int $id)
@@ -129,11 +164,24 @@ class ServiceController extends Controller
         $hotelId = $this->getHotelId();
 
         $service = Service::where('id', $id)->where('hotel_id', $hotelId)->first();
-        if (!$service) return response()->json(['message' => 'Không tìm thấy'], 404);
+        if (!$service) return response()->json(['message' => 'Không tìm thấy món Minibar'], 404);
 
-        $service->status = 0;
-        $service->save();
+        $hasBookings = \App\Models\BookingService::where('service_id', $id)->exists();
+        if ($hasBookings) {
+            $service->status = 0;
+            $service->save();
 
-        return response()->json(['message' => 'Đã ngừng kinh doanh món này!'], 200);
+            return response()->json([
+                'message' => 'Món Minibar này đã từng được khách sử dụng trong đơn đặt phòng, hệ thống đã chuyển sang trạng thái "Ngừng kinh doanh" để bảo toàn lịch sử.',
+                'action' => 'deactivated'
+            ], 200);
+        }
+
+        $service->delete();
+
+        return response()->json([
+            'message' => 'Đã xóa hoàn toàn món Minibar khỏi danh sách!',
+            'action' => 'deleted'
+        ], 200);
     }
 }

@@ -11,29 +11,34 @@ use Illuminate\Support\Facades\Storage;
 
 class ReviewController extends Controller
 {
-    /**
-     * API: Khách hàng gửi đánh giá & Upload ảnh
-     */
+    // Khách hàng gửi đánh giá cho một đơn đặt phòng và upload ảnh kèm theo.
     public function store(Request $request)
     {
         // 1. Validate dữ liệu đầu vào
         $request->validate([
             'booking_id' => 'required|integer',
             'hotel_id' => 'required|integer',
-            'customer_id' => 'required|integer',
             'rating' => 'required|integer|min:1|max:5',
             'comment' => 'nullable|string|max:1000',
-            'images.*' => 'nullable|image|mimes:jpeg,png,jpg|max:5120' // Tối đa 5MB/ảnh
+            'images' => 'nullable|array|max:5', // Chống Spam: Tối đa 5 ảnh mỗi lượt đánh giá
+            'images.*' => 'image|mimes:jpeg,png,jpg,webp|max:5120' // Tối đa 5MB/ảnh, hỗ trợ thêm WebP
         ]);
 
         try {
-            // (Tùy chọn) Kiểm tra xem Booking này đã hoàn thành (Checkout) chưa
-            /*
-            $booking = Booking::find($request->booking_id);
-            if (!$booking || $booking->status !== 'completed') {
-                return response()->json(['status' => 'error', 'message' => 'Bạn chỉ có thể đánh giá sau khi đã hoàn thành kỳ nghỉ.'], 403);
+            $customerId = auth('customer')->id();
+
+            // Kiểm tra xem Booking này có thuộc về khách hàng này và đã hoàn thành chưa
+            $booking = \App\Models\Booking::where('id', $request->booking_id)
+                ->where('customer_id', $customerId)
+                ->first();
+
+            if (!$booking) {
+                return response()->json(['status' => 'error', 'message' => 'Đơn đặt phòng không tồn tại hoặc không thuộc về bạn.'], 403);
             }
-            */
+
+            if ($booking->status != 3) {
+                return response()->json(['status' => 'error', 'message' => 'Bạn chỉ có thể đánh giá sau khi đã trả phòng thành công.'], 403);
+            }
 
             // Kiểm tra xem khách đã đánh giá đơn hàng này chưa (Tránh 1 đơn đánh giá 2 lần)
             $exists = Review::where('booking_id', $request->booking_id)->exists();
@@ -48,7 +53,7 @@ class ReviewController extends Controller
             $review = Review::create([
                 'booking_id' => $request->booking_id,
                 'hotel_id' => $request->hotel_id,
-                'customer_id' => $request->customer_id,
+                'customer_id' => $customerId,
                 'rating' => $request->rating,
                 'comment' => $request->comment,
                 'status' => 1 // 1: Hiển thị ngay (Nếu muốn Admin duyệt trước thì set là 0)
@@ -66,6 +71,20 @@ class ReviewController extends Controller
                         'image_url' => '/storage/' . $path
                     ]);
                 }
+            }
+
+            // 4. CẬP NHẬT ĐIỂM ĐÁNH GIÁ TRUNG BÌNH CHO KHÁCH SẠN
+            $hotel = \App\Models\Hotel::find($request->hotel_id);
+            if ($hotel) {
+                $stats = Review::where('hotel_id', $hotel->id)
+                    ->where('status', 1)
+                    ->selectRaw('AVG(rating) as avg, COUNT(id) as count')
+                    ->first();
+                    
+                $hotel->update([
+                    'average_rating' => round($stats->avg ?? 0, 2),
+                    'review_count' => $stats->count ?? 0
+                ]);
             }
 
             return response()->json([

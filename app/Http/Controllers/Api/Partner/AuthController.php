@@ -71,13 +71,6 @@ class AuthController extends Controller
             'first_name' => 'required|string|max:50',
             'phone' => 'nullable|string|max:15',
         ];
-
-        if ($user instanceof Customer) {
-            $rules['gender'] = 'nullable|string|max:10';
-            $rules['dob'] = 'nullable|date';
-            $rules['address'] = 'nullable|string|max:255';
-        }
-
         $request->validate($rules);
 
         $updateData = [
@@ -85,12 +78,6 @@ class AuthController extends Controller
             'first_name' => $request->first_name,
             'phone' => $request->phone,
         ];
-
-        if ($user instanceof Customer) {
-            if ($request->has('gender')) $updateData['gender'] = $request->gender;
-            if ($request->has('dob')) $updateData['dob'] = $request->dob;
-            if ($request->has('address')) $updateData['address'] = $request->address;
-        }
 
         $user->update($updateData);
 

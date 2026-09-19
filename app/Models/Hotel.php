@@ -8,21 +8,22 @@ use Illuminate\Database\Eloquent\Model;
 class Hotel extends Model
 {
     use HasFactory;
-    // Bảng hotels chỉ có created_at, không có updated_at
-    public $timestamps = false;
-
     protected $fillable = [
         'partner_id',
         'name',
         'description',
         'address',
         'city',
-        'star_rating',
-        'status',
-        'created_at',
         'tax_code',
         'business_license_url',
-        'cancellation_policy'
+        'standard_check_in_time',
+        'standard_check_out_time',
+        'star_rating',
+        'commission_rate',
+        'average_rating',
+        'review_count',
+        'status',
+        'rejection_reason'
     ];
 
     // Liên kết: Một Khách sạn có nhiều Loại phòng
@@ -40,7 +41,10 @@ class Hotel extends Model
     // Liên kết với bảng media để lấy hình ảnh (điều kiện model_type = 'Hotel')
     public function images()
     {
-        return $this->hasMany(Media::class, 'model_id')->where('model_type', 'Hotel');
+        return $this->hasMany(Media::class, 'model_id')
+            ->where('model_type', 'Hotel')
+            ->orderBy('sort_order', 'asc')
+            ->orderBy('id', 'asc');
     }
 
 

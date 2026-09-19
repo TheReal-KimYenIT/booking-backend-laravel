@@ -11,7 +11,7 @@ class Controller extends BaseController
 {
     use AuthorizesRequests, ValidatesRequests;
 
-    // 👉 Hàm thông minh 1: Lấy ra ID của Chủ Khách Sạn (Dù người đang đăng nhập là Lễ tân)
+    //Lấy ra ID của Chủ Khách Sạn (Dù người đang đăng nhập là Lễ tân)
     protected function getOwnerId()
     {
         $user = Auth::guard('partner')->user();
@@ -26,7 +26,7 @@ class Controller extends BaseController
         return $user->parent_id;
     }
 
-    // 👉 Hàm thông minh 2: Lấy ra ID Khách sạn dựa trên Sếp
+    //  Lấy ra ID Khách sạn dựa trên Sếp
     protected function getHotelId()
     {
         $ownerId = $this->getOwnerId();

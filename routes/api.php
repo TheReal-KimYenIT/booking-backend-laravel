@@ -36,13 +36,13 @@ use App\Http\Controllers\Api\Partner\ChatController as PartnerChatController;
 use App\Http\Controllers\Api\Partner\RoomInventoryController as PartnerRoomInventoryController;
 use App\Http\Controllers\Api\Partner\RoomMatrixController as PartnerRoomMatrixController;
 use App\Http\Controllers\Api\Partner\TransactionController as PartnerTransactionController;
-use App\Http\Controllers\Api\Partner\SettlementController as PartnerSettlementController;
-use App\Http\Controllers\Api\Partner\CustomerController as PartnerCustomerController;
 
+use App\Http\Controllers\Api\Partner\CustomerController as PartnerCustomerController;
+use App\Http\Controllers\Api\Partner\ReviewController as PartnerReviewController;
+use App\Http\Controllers\Api\Partner\RefundController as PartnerRefundController;
 
 // 4. Nhóm Admin (Quản trị viên)
 use App\Http\Controllers\Api\Admin\PartnerApprovalController as AdminPartnerApprovalController;
-use App\Http\Controllers\Api\Admin\CustomerController as AdminCustomerController;
 use App\Http\Controllers\Api\Admin\AmenityController as AdminAmenityController;
 use App\Http\Controllers\Api\Admin\RoomViewController as AdminRoomViewController;
 use App\Http\Controllers\Api\Admin\BedTypeController as AdminBedTypeController;
@@ -50,15 +50,16 @@ use App\Http\Controllers\Api\Admin\ContactController as AdminContactController;
 use App\Http\Controllers\Api\Admin\PromotionController as AdminPromotionController;
 use App\Http\Controllers\Api\Admin\SystemSettingController as AdminSystemSettingController;
 use App\Http\Controllers\Api\Admin\TransactionController as AdminTransactionController;
-use App\Http\Controllers\Api\Admin\SettlementController as AdminSettlementController;
+use App\Http\Controllers\Api\Admin\AdminCustomerController as AdminCustomerController;
 use App\Http\Controllers\Api\Admin\RefundController as AdminRefundController;
+
 
 // ==========================================
 //  1. NHÓM API CÔNG KHAI (KHÔNG YÊU CẦU ĐĂNG NHẬP)
 // ==========================================
 
 // -- Xác thực (Auth) --
-Route::post('/login', [PublicAuthController::class, 'login']);
+Route::middleware('throttle:5,1')->post('/login', [PublicAuthController::class, 'login']);
 Route::post('/auth/register', [PublicAuthController::class, 'register']);
 Route::post('/partner/register', [PublicAuthController::class, 'registerPartner']);
 
@@ -67,6 +68,7 @@ Route::get('/hotels/filters-data', [PublicHotelController::class, 'getFiltersDat
 Route::get('/rooms/master-data', [PublicHotelController::class, 'getRoomMasterData']);
 
 // -- Tìm kiếm & Xem chi tiết --
+Route::get('/hotels/destinations-count', [PublicHotelController::class, 'getDestinationsCount']);
 Route::get('/hotels/search', [PublicHotelController::class, 'search']);
 Route::get('/hotels/{id}', [PublicHotelController::class, 'getDetail']);
 Route::get('/rooms/{id}', [PublicRoomTypeController::class, 'show']);
@@ -148,6 +150,7 @@ Route::middleware('auth:sanctum')->prefix('partner')->group(
         Route::get('/hotel', [PartnerHotelController::class, 'show']);
         Route::put('/hotel', [PartnerHotelController::class, 'update']);
         Route::post('/hotel/images', [PartnerHotelController::class, 'uploadImage']);
+        Route::post('/hotel/reorder-images', [PartnerHotelController::class, 'reorderImages']);
         Route::get('/dashboard-stats', [PartnerHotelController::class, 'getStats']);
         Route::get('/hotel/amenities', [PartnerHotelController::class, 'getHotelAmenities']);
         Route::post('/hotel/amenities', [PartnerHotelController::class, 'updateAmenities']);
@@ -156,6 +159,8 @@ Route::middleware('auth:sanctum')->prefix('partner')->group(
         Route::apiResource('room-types', PartnerRoomTypeController::class)->except(['show']);
         Route::post('/room-types/{id}/amenities', [PartnerRoomTypeController::class, 'updateAmenities']);
         Route::post('/room-types/{id}/media', [PartnerRoomTypeController::class, 'uploadMedia']);
+        Route::delete('/media/{mediaId}', [PartnerRoomTypeController::class, 'deleteMedia']);
+        Route::post('/media/{mediaId}/set-primary', [PartnerRoomTypeController::class, 'setPrimaryMedia']);
 
         // -- Quản lý Sơ đồ Phòng vật lý --
         Route::get('/room-amenities', [PartnerRoomController::class, 'getRoomAmenities']);
@@ -188,7 +193,7 @@ Route::middleware('auth:sanctum')->prefix('partner')->group(
         // -- Quản lý Khuyến mãi --
         Route::patch('/promotions/{id}/end-early', [PartnerPromotionController::class, 'endEarly']);
         Route::get('/promotions/{id}/stats', [PartnerPromotionController::class, 'stats']);
-        Route::apiResource('promotions', PartnerPromotionController::class)->only(['index', 'store', 'update']);
+        Route::apiResource('promotions', PartnerPromotionController::class)->only(['index', 'store', 'update', 'destroy']);
 
         // -- Quản lý Đặt phòng (Check-in/Check-out/Menu) --
         Route::get('/bookings', [PartnerBookingController::class, 'index']);
@@ -227,26 +232,31 @@ Route::middleware('auth:sanctum')->prefix('partner')->group(
         Route::put('/chat/threads/{id}/status', [PartnerChatController::class, 'updateStatus']);
 
         // -- Quản lý Nhân viên --
+        Route::patch('staffs/{id}/toggle-status', [PartnerStaffController::class, 'toggleStatus']);
         Route::apiResource('staffs', PartnerStaffController::class)->except(['show']);
         Route::apiResource('roles', PartnerRoleController::class);
-        Route::get('roles', [PartnerStaffController::class, 'getRoles']);
 
         // -- Quản lý Kho phòng & Giao dịch --
         Route::get('/room-inventory', [PartnerRoomInventoryController::class, 'index']);
         Route::post('/room-inventory/bulk-update', [PartnerRoomInventoryController::class, 'updateBulk']);
         Route::get('/room-matrix-grid', [PartnerRoomMatrixController::class, 'getMatrix']);
 
+        Route::get('/transactions/export', [PartnerTransactionController::class, 'export']);
         Route::get('/transactions', [PartnerTransactionController::class, 'index']);
 
-        // -- Đối soát công nợ --
-        Route::get('/settlements', [PartnerSettlementController::class, 'index']);
-        Route::get('/settlements/export-pdf', [PartnerSettlementController::class, 'exportPdf']);
-        Route::post('/settlements/upload-proof', [PartnerSettlementController::class, 'uploadProof']);
-        Route::post('/settlements/partner-confirm', [PartnerSettlementController::class, 'partnerConfirm']);
+
 
 
         Route::get('/customers', [PartnerCustomerController::class, 'index']);
         Route::post('/customers/{id}/toggle-block', [PartnerCustomerController::class, 'toggleBlock']);
+        Route::get('/customers/{id}/bookings', [PartnerCustomerController::class, 'getCustomerBookings']);
+
+        Route::get('/reviews', [PartnerReviewController::class, 'index']);
+        Route::put('/reviews/{id}/reply', [PartnerReviewController::class, 'reply']);
+
+
+        Route::get('/refunds', [PartnerRefundController::class, 'index']);
+        Route::put('/refunds/{id}/confirm', [PartnerRefundController::class, 'confirmRefund']);
     }
 );
 
@@ -254,7 +264,11 @@ Route::middleware('auth:sanctum')->prefix('partner')->group(
 // ==========================================
 //  4. NHÓM API ADMIN (YÊU CẦU ĐĂNG NHẬP ADMIN)
 // ==========================================
+Route::get('/dashboard-test-noauth', [\App\Http\Controllers\Api\Admin\AdminDashboardController::class, 'getStats']);
+
 Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
+    Route::get('/dashboard-test-auth', function() { return response()->json(['status' => 'ok']); });
+    Route::get('/dashboard-stats', [\App\Http\Controllers\Api\Admin\AdminDashboardController::class, 'getStats']);
 
     // -- Quản lý xét duyệt Đối tác/Khách sạn --
     Route::get('/pending-partners', [AdminPartnerApprovalController::class, 'getPendingPartners']);
@@ -264,10 +278,6 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     Route::post('/suspend-partner/{id}', [AdminPartnerApprovalController::class, 'suspendPartner']);
     Route::put('/hotels/{hotelId}/commission', [AdminPartnerApprovalController::class, 'updateCommission']);
 
-    // -- Quản lý Khách hàng --
-    Route::get('/customers', [AdminCustomerController::class, 'index']);
-    Route::post('/customers/{id}/toggle-status', [AdminCustomerController::class, 'toggleStatus']);
-
     // -- Quản lý Master Data --
     Route::apiResource('amenities', AdminAmenityController::class);
     Route::apiResource('room-views', AdminRoomViewController::class);
@@ -276,24 +286,27 @@ Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
     // -- Xử lý liên hệ & Khuyến mãi --
     Route::get('/contacts', [AdminContactController::class, 'index']);
     Route::put('/contacts/{id}/resolve', [AdminContactController::class, 'resolve']);
+    Route::put('/contacts/{id}/status', [AdminContactController::class, 'updateStatus']);
+    Route::delete('/contacts/{id}', [AdminContactController::class, 'destroy']);
 
     Route::get('/promotions', [AdminPromotionController::class, 'index']);
     Route::post('/promotions', [AdminPromotionController::class, 'store']);
     Route::put('/promotions/{id}', [AdminPromotionController::class, 'update']);
+    Route::delete('/promotions/{id}', [AdminPromotionController::class, 'destroy']);
 
     // -- Giao dịch & Cài đặt hệ thống --
-    Route::get('transactions', [AdminTransactionController::class, 'index']);
     Route::get('transactions/export', [AdminTransactionController::class, 'exportCsv']);
+    Route::get('transactions', [AdminTransactionController::class, 'index']);
+
 
     Route::get('system-settings', [AdminSystemSettingController::class, 'index']);
     Route::post('system-settings', [AdminSystemSettingController::class, 'update']);
 
-    // -- Đối soát công nợ --
-    Route::get('settlements', [AdminSettlementController::class, 'index']);
-    Route::get('settlements/export-pdf', [AdminSettlementController::class, 'exportPdf']);
-    Route::post('settlements/confirm', [AdminSettlementController::class, 'confirmPayment']);
+    // -- Quản lý Khách hàng --
+    Route::get('customers', [AdminCustomerController::class, 'index']);
+    Route::post('customers/{id}/toggle-status', [AdminCustomerController::class, 'toggleStatus']);
 
-    // -- Quản lý hoàn tiền --
-    Route::get('refunds', [AdminRefundController::class, 'index']);
-    Route::put('refunds/{id}/confirm', [AdminRefundController::class, 'confirmRefund']);
+    // -- Quản lý Hoàn tiền hệ thống --
+    Route::get('/refunds', [AdminRefundController::class, 'index']);
+    Route::put('/refunds/{id}/confirm', [AdminRefundController::class, 'confirmRefund']);
 });

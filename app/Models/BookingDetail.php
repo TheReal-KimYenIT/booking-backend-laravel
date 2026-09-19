@@ -11,8 +11,6 @@ class BookingDetail extends Model
     protected $fillable = [
         'booking_id',
         'room_type_id',
-        'check_in_date',
-        'check_out_date',
         'rooms_count',
         'subtotal'
     ];

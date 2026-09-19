@@ -41,17 +41,16 @@ class RoomMatrixController extends Controller
             ->orderBy('room_name', 'asc')
             ->get();
 
-        // 3. Lấy toàn bộ lịch xếp phòng đang diễn ra trong dải ngày này
+        // 3. Lấy toàn bộ lịch xếp phòng đang diễn ra trong dải ngày này (loại trừ đơn đã hủy)
+        $startDateStr = $startDate->format('Y-m-d');
+        $endDateStr = $endDate->format('Y-m-d');
+
         $assignments = BookingRoomAssignment::with(['booking'])
-            ->whereHas('booking', function ($query) use ($hotelId) {
-                $query->where('hotel_id', $hotelId);
-            })
-            ->where(function ($query) use ($startDate, $endDate) {
-                // Điều kiện chồng chéo dải ngày đặt phòng
-                $query->whereHas('booking', function ($bQ) use ($startDate, $endDate) {
-                    $bQ->whereBetween('check_in', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')])
-                        ->orWhereBetween('check_out', [$startDate->format('Y-m-d'), $endDate->format('Y-m-d')]);
-                });
+            ->whereHas('booking', function ($query) use ($hotelId, $startDateStr, $endDateStr) {
+                $query->where('hotel_id', $hotelId)
+                      ->whereIn('status', [1, 2, 3]) // CHỈ LẤY: 1: Đã xác nhận, 2: Đang lưu trú, 3: Đã trả phòng (Loại trừ 4: Đã hủy, 5: No-show, 0: Chưa thanh toán)
+                      ->where('check_in', '<=', $endDateStr)
+                      ->where('check_out', '>', $startDateStr); // CÔNG THỨC TOÁN HỌC GIAO THỜI GIAN
             })
             ->get();
 
@@ -62,7 +61,7 @@ class RoomMatrixController extends Controller
                 'room_id' => $room->id,
                 'room_name' => $room->room_name,
                 'room_type_name' => $room->roomType->name ?? 'Mặc định',
-                'current_status' => $room->status, // Tình trạng buồng phòng hiện tại (0: dọn dẹp, 1: trống, 3: bảo trì)
+                'current_status' => $room->status, // Tình trạng buồng phòng hiện tại (0: dọn dẹp, 1: trống, 2: có khách, 3: bảo trì)
                 'days' => []
             ];
 
@@ -100,9 +99,19 @@ class RoomMatrixController extends Controller
             $matrixGrid[] = $row;
         }
 
+        // Thống kê nhanh tình trạng buồng phòng vật lý
+        $stats = [
+            'total' => $rooms->count(),
+            'ready' => $rooms->where('status', 1)->count(),
+            'occupied' => $rooms->where('status', 2)->count(),
+            'cleaning' => $rooms->where('status', 0)->count(),
+            'maintenance' => $rooms->where('status', 3)->count(),
+        ];
+
         return response()->json([
             'headers' => $daysHeader,
-            'matrix' => $matrixGrid
+            'matrix' => $matrixGrid,
+            'stats' => $stats
         ], 200);
     }
 }

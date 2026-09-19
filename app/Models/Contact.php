@@ -10,7 +10,6 @@ class Contact extends Model
     use HasFactory;
 
     protected $fillable = [
-        'booking_id',
         'customer_id',
         'name',
         'email',
@@ -18,17 +17,8 @@ class Contact extends Model
         'subject',
         'message',
         'sender_type',
-        'status',
-        // BẮT BUỘC PHẢI THÊM 3 DÒNG NÀY ĐỂ LỄ TÂN CÓ THỂ LƯU PHẢN HỒI
-        'reply_message',
-        'replied_at',
-        'replied_by'
+        'status'
     ];
-
-    public function booking()
-    {
-        return $this->belongsTo(Booking::class, 'booking_id');
-    }
 
     public function customer()
     {

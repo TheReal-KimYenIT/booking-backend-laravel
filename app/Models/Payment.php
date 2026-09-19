@@ -13,6 +13,7 @@ class Payment extends Model
         'transaction_id',
         'payment_method',
         'amount',
-        'payment_status'
+        'payment_status',
+        'paid_at'
     ];
 }

@@ -10,10 +10,8 @@ class RoomInventory extends Model
 {
     use HasFactory;
 
-    // Chỉ định chính xác tên bảng trong database của bạn
     protected $table = 'room_inventory';
 
-    // Bảng của bạn không có 2 cột tự động created_at và updated_at, cần tắt đi để tránh lỗi Laravel
     public $timestamps = false;
 
     protected $fillable = [

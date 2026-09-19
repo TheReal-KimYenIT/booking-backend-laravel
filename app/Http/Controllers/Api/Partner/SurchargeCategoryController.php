@@ -11,7 +11,6 @@ class SurchargeCategoryController extends Controller
     // 1. Lấy danh sách phụ thu
     public function index(Request $request)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
         if (!$hotelId) return response()->json(['message' => 'Chưa có thông tin khách sạn'], 400);
 
@@ -22,7 +21,6 @@ class SurchargeCategoryController extends Controller
     // 2. Thêm mới danh mục phụ thu
     public function store(Request $request)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
         if (!$hotelId) return response()->json(['message' => 'Chưa có thông tin khách sạn'], 400);
 
@@ -43,7 +41,6 @@ class SurchargeCategoryController extends Controller
     // 3. Cập nhật danh mục phụ thu
     public function update(Request $request, int $id)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
 
         $category = SurchargeCategory::where('id', $id)->where('hotel_id', $hotelId)->first();
@@ -65,11 +62,18 @@ class SurchargeCategoryController extends Controller
     // 4. Xóa danh mục phụ thu
     public function destroy(int $id)
     {
-        // 👉 Gọi hàm thông minh
         $hotelId = $this->getHotelId();
 
         $category = SurchargeCategory::where('id', $id)->where('hotel_id', $hotelId)->first();
         if (!$category) return response()->json(['message' => 'Không tìm thấy danh mục'], 404);
+
+        // FIX BUG: Chặn xóa nếu danh mục này đã từng được gán cho khách. Việc xóa sẽ làm mất lịch sử tài chính của Booking.
+        $inUseCount = \App\Models\BookingSurcharge::where('surcharge_category_id', $id)->count();
+        if ($inUseCount > 0) {
+            return response()->json([
+                'message' => "Không thể xóa! Danh mục này đang được dùng trong {$inUseCount} hóa đơn phụ thu của khách. Xóa sẽ làm hỏng dữ liệu tài chính."
+            ], 400);
+        }
 
         $category->delete();
 

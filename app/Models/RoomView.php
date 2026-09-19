@@ -12,4 +12,9 @@ class RoomView extends Model
         'name',
         'status',
     ];
+
+    public function roomTypes()
+    {
+        return $this->hasMany(RoomType::class, 'view_id');
+    }
 }

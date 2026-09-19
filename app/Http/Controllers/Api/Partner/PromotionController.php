@@ -82,6 +82,7 @@ class PromotionController extends Controller
 
         if ($request->has('code')) {
             $request->validate([
+                'code' => 'required|string|max:50|unique:promotions,code,' . $id,
                 'discount_type' => 'required|integer|in:1,2',
                 'discount_value' => 'required|numeric|min:0',
                 'max_discount_amount' => 'nullable|numeric|min:0',
@@ -94,6 +95,7 @@ class PromotionController extends Controller
             ]);
 
             $promotion->update([
+                'code' => strtoupper($request->code),
                 'discount_type' => $request->discount_type,
                 'discount_value' => $request->discount_value,
                 'max_discount_amount' => $request->max_discount_amount,
@@ -141,4 +143,36 @@ class PromotionController extends Controller
             'total_used' => $promotion->used_count
         ], 200);
     }
+
+    // 6. Xóa mã khuyến mãi (destroy) - Kiểm tra toàn vẹn dữ liệu
+    public function destroy(int $id)
+    {
+        $hotelId = $this->getHotelId();
+        $promotion = Promotion::where('id', $id)->where('hotel_id', $hotelId)->first();
+
+        if (!$promotion) return response()->json(['message' => 'Không tìm thấy mã khuyến mãi'], 404);
+
+        // Kiểm tra xem mã đã từng được áp dụng trong đơn đặt phòng nào chưa
+        $hasBookings = \App\Models\Booking::where('promotion_id', $id)
+            ->orWhere('hotel_promotion_id', $id)
+            ->exists();
+
+        if ($hasBookings) {
+            $promotion->status = 0;
+            $promotion->save();
+
+            return response()->json([
+                'message' => 'Mã khuyến mãi này đã có đơn đặt phòng sử dụng, hệ thống chuyển sang trạng thái "Đã khóa" để bảo toàn lịch sử giao dịch.',
+                'action' => 'locked'
+            ], 200);
+        }
+
+        $promotion->delete();
+
+        return response()->json([
+            'message' => 'Đã xóa hoàn toàn mã khuyến mãi khỏi hệ thống!',
+            'action' => 'deleted'
+        ], 200);
+    }
 }
+

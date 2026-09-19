@@ -24,12 +24,17 @@ class Booking extends Model
 
         // --- Phần Giá tiền ---
         'total_amount',
+        'deposit_amount',
         'discount_amount',
         'vat_amount',
         'vat_rate',
         'commission_rate',
-        'total_price',
         'platform_fee',
+
+        // Chính sách hủy phòng (Snapshot)
+        'free_cancel_hours',
+        'partial_refund_hours',
+        'partial_refund_percent',
 
         //hoàn tiền
         'refund_status',
@@ -37,12 +42,11 @@ class Booking extends Model
         'refund_bank',
         'refund_account',
         'refund_account_name',
+        'refund_receipt_url',
 
         // --- Phần Trạng thái ---
         'status',
         'payment_status',    // <-- THÊM VÀO: Đã có trong DB
-        'is_vat_requested',
-        'is_reviewed',       // <-- THÊM VÀO: Đã có trong DB
         'cancellation_reason',
 
         // --- Phần Thời gian ---
@@ -57,8 +61,6 @@ class Booking extends Model
 
     protected $casts = [
         // 'status' => BookingStatus::class, // Tạm khóa nếu bạn chưa có file Enum này, nếu có rồi thì mở ra
-        'is_vat_requested' => 'boolean',
-        'is_reviewed' => 'boolean',
         'actual_check_in_at' => 'datetime',
         'actual_check_out_at' => 'datetime',
     ];
@@ -100,10 +102,6 @@ class Booking extends Model
         return $this->hasMany(BookingMinibar::class);
     }
 
-    public function invoice()
-    {
-        return $this->hasOne(Invoice::class);
-    }
 
     // Bổ sung quan hệ lấy danh sách phòng vật lý đã gán
     public function roomAssignments()

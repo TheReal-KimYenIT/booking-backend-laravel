@@ -10,17 +10,18 @@ use Illuminate\Support\Facades\DB;
 
 class PartnerApprovalController extends Controller
 {
-    // 1. Lấy danh sách đối tác & khách sạn đang chờ duyệt (status = 0)
+    // Lấy danh sách đối tác đang chờ admin duyệt.
     public function getPendingPartners()
     {
         $pendingPartners = Hotel::with('partner:id,last_name,first_name,email,phone')
             ->where('status', 0)
+            ->orderBy('id', 'desc')
             ->get();
 
         return response()->json(['data' => $pendingPartners], 200);
     }
 
-    // 2. Phê duyệt đối tác (Chuyển status = 1, is_active = 1)
+    // Phê duyệt tài khoản đối tác và cho phép hoạt động.
     public function approvePartner(int $hotelId)
     {
         DB::beginTransaction();
@@ -29,9 +30,13 @@ class PartnerApprovalController extends Controller
             $hotel->status = 1; // 1: Đã duyệt
             $hotel->save();
 
-            $partner = Partner::findOrFail($hotel->partner_id);
-            $partner->is_active = 1; // 1: Cho phép đăng nhập
-            $partner->save();
+            if ($hotel->partner_id) {
+                $partner = Partner::find($hotel->partner_id);
+                if ($partner) {
+                    $partner->is_active = 1; // 1: Cho phép đăng nhập
+                    $partner->save();
+                }
+            }
 
             DB::commit();
             return response()->json(['message' => 'Đã phê duyệt đối tác thành công!'], 200);
@@ -41,7 +46,7 @@ class PartnerApprovalController extends Controller
         }
     }
 
-    // 3. Từ chối đối tác (Chuyển status = 2)
+    // Từ chối đối tác và lưu lý do.
     public function rejectPartner(Request $request, int $hotelId)
     {
         $request->validate([
@@ -53,7 +58,7 @@ class PartnerApprovalController extends Controller
             $hotel = Hotel::findOrFail($hotelId);
             $hotel->status = 2; // 2: Bị từ chối
 
-            // $hotel->rejection_reason = $request->reason; // Mở ra nếu bạn có cột này
+            $hotel->rejection_reason = $request->reason;
 
             $hotel->save();
 
@@ -65,17 +70,18 @@ class PartnerApprovalController extends Controller
         }
     }
 
-    // 4. Lấy danh sách đối tác đang hoạt động (status = 1)
+    // Lấy danh sách đối tác đã được duyệt.
     public function getApprovedPartners()
     {
         $approvedPartners = Hotel::with('partner:id,last_name,first_name,email,phone')
             ->where('status', 1)
+            ->orderBy('id', 'desc')
             ->get();
 
         return response()->json(['data' => $approvedPartners], 200);
     }
 
-    // 5. Đình chỉ/Khóa đối tác (Chuyển status = 2, is_active = 0)
+    // Khóa đối tác nếu phát hiện vi phạm hoặc cần đình chỉ.
     public function suspendPartner(Request $request, int $hotelId)
     {
         $request->validate([
@@ -86,12 +92,16 @@ class PartnerApprovalController extends Controller
         try {
             $hotel = Hotel::findOrFail($hotelId);
             $hotel->status = 2; // 2: Bị đình chỉ/từ chối
-            // $hotel->rejection_reason = $request->reason; // Mở ra nếu bạn có cột này
+            $hotel->rejection_reason = $request->reason;
             $hotel->save();
 
-            $partner = Partner::findOrFail($hotel->partner_id);
-            $partner->is_active = 0; // 0: Khóa không cho đăng nhập nữa
-            $partner->save();
+            if ($hotel->partner_id) {
+                $partner = Partner::find($hotel->partner_id);
+                if ($partner) {
+                    $partner->is_active = 0; // 0: Khóa không cho đăng nhập nữa
+                    $partner->save();
+                }
+            }
 
             DB::commit();
             return response()->json(['message' => 'Đã khóa tài khoản đối tác thành công!'], 200);
@@ -100,9 +110,7 @@ class PartnerApprovalController extends Controller
             return response()->json(['message' => 'Lỗi hệ thống: ' . $e->getMessage()], 500);
         }
     }
-    /**
-     * Cập nhật tỉ lệ hoa hồng riêng cho từng khách sạn
-     */
+    // Cập nhật phần trăm hoa hồng riêng cho từng khách sạn.
     public function updateCommission(Request $request, int $hotelId)
     {
         $request->validate([

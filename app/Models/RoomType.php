@@ -4,11 +4,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
-use App\Models\Media; // Thêm dòng này cho chắc chắn (dù cùng thư mục)
+use App\Models\Media;
 
 class RoomType extends Model
 {
-    // Tắt timestamps vì bảng không có created_at, updated_at
     public $timestamps = false;
 
     protected $table = 'room_types';
@@ -18,7 +17,6 @@ class RoomType extends Model
         'name',
         'slug',
         'room_size',
-        'bed_type', // Vẫn giữ lại cột cũ để hệ thống cũ không bị lỗi dữ liệu
         'base_price',
         'max_adults',
         'max_children',
@@ -27,8 +25,11 @@ class RoomType extends Model
         'bed_type_id',
         'description',
         'has_breakfast',
-        'cancellation_policy',
-        'smoking_policy'
+        'smoking_policy',
+
+        'free_cancel_hours',
+        'partial_refund_hours',
+        'partial_refund_percent'
     ];
     // Tự động tạo slug (đường dẫn chuẩn SEO) từ tên loại phòng khi lưu
     protected static function boot()
@@ -53,7 +54,7 @@ class RoomType extends Model
         return $this->belongsTo(Hotel::class, 'hotel_id');
     }
 
-    // 👇 THÊM MỚI: Liên kết với bảng Media để lấy hình ảnh phòng 👇
+    //  Liên kết với bảng Media để lấy hình ảnh phòng 
     public function media()
     {
         return $this->hasMany(Media::class, 'model_id')->where('model_type', 'RoomType');
@@ -64,7 +65,7 @@ class RoomType extends Model
         return $this->belongsTo(RoomView::class, 'view_id');
     }
 
-    // 👇 ĐÃ THÊM: Mối quan hệ trỏ tới danh mục Loại Giường của Admin 👇
+    //   Mối quan hệ trỏ tới danh mục Loại Giường của Admin 
     public function bedTypeDetail()
     {
         return $this->belongsTo(BedType::class, 'bed_type_id');
@@ -73,5 +74,15 @@ class RoomType extends Model
     public function bookingDetails()
     {
         return $this->hasMany(BookingDetail::class, 'room_type_id');
+    }
+
+    public function rooms()
+    {
+        return $this->hasMany(Room::class, 'room_type_id');
+    }
+
+    public function roomInventories()
+    {
+        return $this->hasMany(RoomInventory::class, 'room_type_id');
     }
 }

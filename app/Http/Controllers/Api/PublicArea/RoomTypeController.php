@@ -8,15 +8,15 @@ use Illuminate\Http\Request;
 
 class RoomTypeController extends Controller
 {
-    // ==========================================
-    // Dành cho khách hàng xem chi tiết phòng (React Checkout)
-    // ==========================================
+    // Lấy thông tin chi tiết một loại phòng để hiển thị ở giao diện checkout.
     public function show(int $id)
     {
+        // Lấy thông tin loại phòng kèm tiện nghi, khách sạn và ảnh.
         $roomType = RoomType::with(['amenities', 'hotel', 'media'])->find($id);
 
-        if (!$roomType) {
-            return response()->json(['message' => 'Không tìm thấy thông tin phòng'], 404);
+        // Nếu không tìm thấy hoặc phòng đang tạm ngưng mở bán thì trả về lỗi 404.
+        if (!$roomType || $roomType->status != 1) {
+            return response()->json(['message' => 'Loại phòng này không tồn tại hoặc đang tạm ngưng mở bán'], 404);
         }
 
         return response()->json([

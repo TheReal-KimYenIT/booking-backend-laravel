@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
+    // Lấy thông tin tài khoản khách hàng đang đăng nhập.
     public function getProfile(Request $request)
     {
         return response()->json([
@@ -18,6 +19,7 @@ class AuthController extends Controller
         ], 200);
     }
 
+    // Cập nhật thông tin cá nhân của khách hàng.
     public function updateProfile(Request $request)
     {
         $user = $request->user();
@@ -26,13 +28,10 @@ class AuthController extends Controller
             'last_name' => 'required|string|max:100',
             'first_name' => 'required|string|max:50',
             'phone' => 'nullable|string|max:15',
+            'gender' => 'nullable|string|max:10',
+            'dob' => 'nullable|date',
+            'address' => 'nullable|string|max:255'
         ];
-
-        if ($user instanceof Customer) {
-            $rules['gender'] = 'nullable|string|max:10';
-            $rules['dob'] = 'nullable|date';
-            $rules['address'] = 'nullable|string|max:255';
-        }
 
         $request->validate($rules);
 
@@ -42,11 +41,10 @@ class AuthController extends Controller
             'phone' => $request->phone,
         ];
 
-        if ($user instanceof Customer) {
-            if ($request->has('gender')) $updateData['gender'] = $request->gender;
-            if ($request->has('dob')) $updateData['dob'] = $request->dob;
-            if ($request->has('address')) $updateData['address'] = $request->address;
-        }
+        // Dùng keys() để kiểm tra xem request có gửi key này lên không, kể cả khi giá trị là null
+        if (in_array('gender', $request->keys())) $updateData['gender'] = $request->gender;
+        if (in_array('dob', $request->keys())) $updateData['dob'] = $request->dob;
+        if (in_array('address', $request->keys())) $updateData['address'] = $request->address;
 
         $user->update($updateData);
 
@@ -56,6 +54,7 @@ class AuthController extends Controller
         ], 200);
     }
 
+    // Vô hiệu hóa tài khoản khách hàng.
     public function deleteAccount(Request $request)
     {
         $user = $request->user();
@@ -72,13 +71,17 @@ class AuthController extends Controller
         return response()->json(['message' => 'Tài khoản đã được xóa thành công!'], 200);
     }
 
+    // Đổi mật khẩu cho tài khoản khách hàng.
     public function changePassword(Request $request)
     {
         $user = $request->user();
 
         $request->validate([
             'current_password' => 'required|string',
-            'new_password' => 'required|string|min:6|confirmed'
+            'new_password' => ['required', 'string', 'min:8', 'confirmed', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/']
+        ], [
+            'new_password.min' => 'Mật khẩu mới phải có ít nhất 8 ký tự.',
+            'new_password.regex' => 'Mật khẩu mới phải chứa ít nhất 1 chữ hoa, 1 chữ thường và 1 số.',
         ]);
 
         if (!Hash::check($request->current_password, $user->password_hash)) {

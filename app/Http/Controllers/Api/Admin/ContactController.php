@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 
 class ContactController extends Controller
 {
-    // 1. Lấy danh sách tất cả các liên hệ gửi cho hệ thống
+    // Lấy danh sách các liên hệ gửi từ người dùng cho admin xem.
     public function index()
     {
         // Lấy danh sách, sắp xếp tin nhắn mới nhất lên đầu
@@ -17,7 +17,7 @@ class ContactController extends Controller
         return response()->json(['data' => $contacts]);
     }
 
-    // 2. Đánh dấu đã giải quyết (chuyển status thành 1)
+    // Đánh dấu một liên hệ đã được xử lý.
     public function resolve(int $id)
     {
         $contact = Contact::findOrFail($id);
@@ -27,5 +27,27 @@ class ContactController extends Controller
         ]);
 
         return response()->json(['message' => 'Đã đánh dấu xử lý thành công!']);
+    }
+
+    // Cập nhật trạng thái liên hệ (0: Chưa xử lý, 1: Đã giải quyết)
+    public function updateStatus(Request $request, int $id)
+    {
+        $contact = Contact::findOrFail($id);
+        $status = $request->input('status', 1);
+
+        $contact->update([
+            'status' => (int)$status
+        ]);
+
+        return response()->json(['message' => 'Cập nhật trạng thái liên hệ thành công!', 'data' => $contact]);
+    }
+
+    // Xóa liên hệ
+    public function destroy(int $id)
+    {
+        $contact = Contact::findOrFail($id);
+        $contact->delete();
+
+        return response()->json(['message' => 'Đã xóa tin nhắn liên hệ thành công!']);
     }
 }

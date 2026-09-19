@@ -6,12 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Contact;
 use Illuminate\Http\Request;
 
-// Đã đổi tên class khớp với tên file SystemContactController.php
 class SystemContactController extends Controller
 {
-    // POST: /api/contacts
+    // Gửi liên hệ từ trang chủ tới hệ thống quản trị.
     public function store(Request $request)
     {
+        // Kiểm tra dữ liệu người dùng gửi lên.
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255',
@@ -20,9 +20,10 @@ class SystemContactController extends Controller
             'message' => 'required|string',
         ]);
 
-        // Kiểm tra xem người gửi có đang đăng nhập không (lấy ID để Admin tiện hỗ trợ)
+        // Nếu người dùng đã đăng nhập thì lấy id để admin tiện theo dõi.
         $customerId = auth('sanctum')->check() ? auth('sanctum')->id() : null;
 
+        // Lưu liên hệ vào bảng contact để admin xử lý sau.
         Contact::create([
             'name' => $validated['name'],
             'email' => $validated['email'],

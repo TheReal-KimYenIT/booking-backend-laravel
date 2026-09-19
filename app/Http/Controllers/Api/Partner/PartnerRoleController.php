@@ -19,6 +19,7 @@ class PartnerRoleController extends Controller
         if (!$this->checkIsOwner()) return response()->json(['message' => 'Từ chối truy cập!'], 403);
 
         $roles = PartnerRole::where('owner_id', $this->getOwnerId())
+            ->withCount('staffs')
             ->orderBy('created_at', 'desc')->get();
         return response()->json(['data' => $roles], 200);
     }
