@@ -102,7 +102,8 @@ Route::get('/promotions/active', [CustomerPromotionController::class, 'getActive
 
 // -- Route lấy ảnh --
 Route::get('/get-image', function (Request $request) {
-    $relativePath = str_replace('/storage/', '', $request->query('path'));
+    $path = $request->query('path', '');
+    $relativePath = preg_replace('#^/?storage/#', '', $path);
     $fullPath = storage_path('app/public/' . $relativePath);
     if (!file_exists($fullPath)) {
         return response()->json(['message' => 'Không tìm thấy ảnh'], 404);
