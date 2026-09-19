@@ -1,18 +1,11 @@
 FROM php:8.2-apache
 
-# Install required system dependencies & PostgreSQL / PHP extensions
-RUN apt-get update && apt-get install -y \
-    libpq-dev \
-    libzip-dev \
-    libpng-dev \
-    libonig-dev \
-    libxml2-dev \
-    zip \
-    unzip \
-    git \
-    curl \
-    && docker-php-ext-install pdo pdo_pgsql pgsql pdo_mysql mbstring exif pcntl bcmath gd zip \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Install git and unzip for Composer
+RUN apt-get update && apt-get install -y git unzip && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install official PHP extension installer to reliably install PostgreSQL & Laravel extensions
+COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
+RUN install-php-extensions pdo_pgsql pdo_mysql gd zip bcmath pcntl exif opcache
 
 # Enable Apache mod_rewrite
 RUN a2enmod rewrite
