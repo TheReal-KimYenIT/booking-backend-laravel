@@ -20,14 +20,18 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
-        'http://localhost:3000', // Dành cho bạn code trên máy tính
-        'https://booking-user-frontend-phi.vercel.app', // Link Vercel React
-        'https://booking-admin-angular-4z3l.vercel.app', // Link Vercel Angular
+        'http://localhost:3000',
+        'http://localhost:4200',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:4200',
+        'https://booking-user-react-main.vercel.app',
+        'https://booking-admin-angular.vercel.app',
     ],
 
-    'allowed_origins' => [
-        'http://localhost:3000', // Cho phép trang của Khách hàng (React)
-        'http://localhost:4200', // Cho phép trang của Chủ khách sạn (Angular)
+    'allowed_origins_patterns' => [
+        '#^https://.*\.vercel\.app$#',
+        '#^http://localhost:\d+$#',
+        '#^http://127\.0\.0\.1:\d+$#',
     ],
 
     'allowed_headers' => ['*'],
